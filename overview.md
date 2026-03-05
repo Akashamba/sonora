@@ -12,6 +12,12 @@ Music is sourced and managed locally. The server supports yt-dlp integration for
 
 ---
 
+## Reccommendations
+
+Start with basic shuffle (controlled randomness like an ipod), add a smarter shuffle weighted by play count, last played, mood/energy tags down the line. Long-term, Last.fm scrobbling will enable artist and track recommendations via their API, surfacing new music based on listening history.
+
+---
+
 ## App
 
 Built in **Expo (React Native)** with a web export that doubles as a **PWA**. One codebase for both.
