@@ -1,3 +1,8 @@
 /node_modules
 /audio
-fetch-m4a.sh
+
+# env
+.env
+
+# db
+tracks.sqlite
