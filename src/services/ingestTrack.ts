@@ -1,3 +1,5 @@
+// TODO: Group all unknown album songs under the same album, same for artists, not for unknown name
+
 import { queryMatches } from "~/server/db/queries/queryTrackMatches";
 import { addNewTrack } from "~/server/db/transactions/addNewTrack";
 import { sanitizeFileName } from "~/utils/audioPath";
@@ -21,11 +23,11 @@ export async function ingestTrack(url: string) {
     const [youtubeId, youtubeUrl] = parseYouTubeUrl(url);
 
     // Get metadata from YouTube
-    console.log("Fetching metadata from YouTube");
+    console.log("[ingest] fetching metadata from youtube");
     const ytMetadata = await fetchYtMetadata(youtubeUrl);
 
     // Get metadata from MusicBrainz
-    console.log("Extracting data from musicbrainz");
+    console.log("[ingest] extracting metadata from musicbrainz");
     const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata);
 
     // Check if track already exists
@@ -34,7 +36,8 @@ export async function ingestTrack(url: string) {
       musicbrainzmetadata.recordings[0].id ?? "",
     );
     if (matches.length > 0) {
-      console.log("Song already exists in db");
+      console.log("[ingest] track already exists in db");
+      console.log("[ingest] terminating");
       return;
     }
 
@@ -46,13 +49,13 @@ export async function ingestTrack(url: string) {
     const filePath = `audio/${sanitizeFileName(recording.title)}.m4a`;
     try {
       await downloadWithRetry(youtubeUrl, filePath);
-      console.log("Download complete");
+      console.log("[ingest] download complete");
     } catch (err) {
       throw new Error(`Download failed: ${(err as Error).message}`);
     }
 
     // Write to db
-    console.log("Writing track info to database");
+    console.log("[ingest] writing track info to database");
     await addNewTrack({
       release: release,
       recording: {
@@ -63,9 +66,9 @@ export async function ingestTrack(url: string) {
       filePath: filePath,
     });
 
-    console.log("Track info inserted successfully");
+    console.log("[ingest] track info written to db successfully");
   } catch (err) {
-    console.error("Track ingestion failed", err);
+    console.error("[ingest] track ingest failed", err);
     throw err;
   }
 }
