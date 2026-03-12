@@ -23,21 +23,21 @@ export async function ingestTrack(url: string) {
     const [youtubeId, youtubeUrl] = parseYouTubeUrl(url);
 
     // Get metadata from YouTube
-    console.log("[ingest] fetching metadata from youtube");
+    console.log(`[ingest] [${youtubeId}] fetching metadata from youtube`);
     const ytMetadata = await fetchYtMetadata(youtubeUrl);
 
     // Get metadata from MusicBrainz
-    console.log("[ingest] extracting metadata from musicbrainz");
+    console.log(`[ingest] [${youtubeId}] extracting metadata from musicbrainz`);
     const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata);
 
     // Check if track already exists
     const matches = await queryMatches(
       youtubeId,
-      musicbrainzmetadata.recordings[0].id ?? "",
+      musicbrainzmetadata?.recordings[0]?.id ?? "",
     );
     if (matches.length > 0) {
-      console.log("[ingest] track already exists in db");
-      console.log("[ingest] terminating");
+      console.log(`[ingest] [${youtubeId}] track already exists in db`);
+      console.log(`[ingest] [${youtubeId}] terminating`);
       return;
     }
 
@@ -49,26 +49,28 @@ export async function ingestTrack(url: string) {
     const filePath = `audio/${sanitizeFileName(recording.title)}.m4a`;
     try {
       await downloadWithRetry(youtubeUrl, filePath);
-      console.log("[ingest] download complete");
+      console.log(`[ingest] [${youtubeId}] download complete`);
     } catch (err) {
       throw new Error(`Download failed: ${(err as Error).message}`);
     }
 
     // Write to db
-    console.log("[ingest] writing track info to database");
+    console.log(`[ingest] [${youtubeId}] writing track info to database`);
     await addNewTrack({
       release: release,
       recording: {
         ...recording,
-        length: recording.length ?? getAudioLengthMs(filePath) ?? 0,
+        length: recording.length ?? (await getAudioLengthMs(filePath)) ?? 0,
       },
       youtubeId: youtubeId,
       filePath: filePath,
     });
 
-    console.log("[ingest] track info written to db successfully");
+    console.log(
+      `[ingest] [${youtubeId}] track info written to db successfully`,
+    );
   } catch (err) {
-    console.error("[ingest] track ingest failed", err);
+    console.error(`[ingest] [${url}] track ingest failed`, err);
     throw err;
   }
 }

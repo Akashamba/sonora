@@ -1,7 +1,13 @@
 import type { Transaction } from "~/types/definitions/database";
 import { release_groups } from "../schema";
 
-export async function upsertReleaseGroup(tx: Transaction, release: any) {
+export async function upsertReleaseGroup(
+  tx: Transaction,
+  release: {
+    "release-group": { id: string; "primary-type": string; title: string };
+    date: string;
+  },
+) {
   const [insertedReleaseGroup] = await tx
     .insert(release_groups)
     .values({

@@ -1,5 +1,6 @@
 import type { Transaction } from "~/types/definitions/database";
 import { tracks } from "../schema";
+import type { ArtistType } from "./insertArtist";
 
 interface TrackType {
   release_group_id: string;
@@ -9,6 +10,7 @@ interface TrackType {
     title: string;
     "first-release-date": string;
     length: number;
+    "artist-credit": ArtistType[];
   };
   youtube_id: string;
 }

@@ -8,6 +8,16 @@ type ParsedYTMetadata = {
   upload_date: string | null;
 };
 
+export async function getAllUrlsFromPlaylist(url: string): Promise<string[]> {
+  // if it's not a playlist, just return it
+  if (!url.includes("list=")) return [url];
+
+  const output =
+    await $`yt-dlp --flat-playlist --print "%(url)s" ${url}`.text();
+
+  return output.trim().split("\n").filter(Boolean);
+}
+
 /* Parse YouTube urls of different forms to extract standard url and video id */
 export function parseYouTubeUrl(
   input: string,
@@ -180,13 +190,17 @@ export async function fetchMusicBrainzMetadata(metadata: {
     metadata.artists.forEach((artist) => (query += ` AND artist:${artist}`));
   }
 
-  console.log("Sending query to MusicBrainz:", query);
+  // escaping special characters for lucene and encoding to be suitable for a url
+  const luceneEscape = (str: string) =>
+    str.replace(/([+\-&|!(){}[\]^"~*?:\\\/])/g, "\\$1");
+  const escaped = luceneEscape(query);
+  const urlParam = encodeURIComponent(escaped);
 
-  // TODO: Escape special characters for Lucene (search engine used by musicbrainz) (https://lucene.apache.org/core/4_3_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#Escaping_Special_Characters)
+  console.log("Sending query to MusicBrainz:", urlParam);
 
   // Query MusicBrainz
   const res = await fetch(
-    `https://musicbrainz.org/ws/2/recording?query=${query}&fmt=json`,
+    `https://musicbrainz.org/ws/2/recording?query=${urlParam}&fmt=json`,
     {
       headers: {
         Accept: "application/json",
@@ -226,7 +240,7 @@ export function createFallbackRecording(parsedYtDlpMetadata: any) {
       },
     ],
     release: {
-      release_group: {
+      "release-group": {
         id: null,
         title: parsedYtDlpMetadata.album || "Single",
         "primary-type": hasAlbum ? "album" : "single",

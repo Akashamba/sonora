@@ -7,7 +7,9 @@ export const tracks = sqliteTable("tracks_table", {
     .$defaultFn(() => randomUUID()),
   youtube_id: text().notNull().unique(),
   musicbrainz_recording_id: text().unique(),
-  release_group_id: text().references(() => release_groups.id), // to handle track <-> release_group relation
+  release_group_id: text().references(() => release_groups.id, {
+    onDelete: "cascade",
+  }), // to handle track <-> release_group relation
   title: text().notNull(),
   first_release_date: int({ mode: "timestamp_ms" }).notNull(),
   length: int().notNull(),
@@ -56,8 +58,8 @@ export const artists = sqliteTable("artists_table", {
 // track <-> artists relation: maps tracks to the artists who contributed to the track.
 // Includes position of artists is list of artists of the song ordered by contribution.
 export const track_artists = sqliteTable("track_artists", {
-  track_id: text().references(() => tracks.id),
-  artist_id: text().references(() => artists.id),
+  track_id: text().references(() => tracks.id, { onDelete: "cascade" }),
+  artist_id: text().references(() => artists.id, { onDelete: "cascade" }),
   pos: int().notNull(), // position in musicbrainz artist_credit list
   joinphrase: text(),
 });

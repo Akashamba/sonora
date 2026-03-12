@@ -2,6 +2,8 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { artists, release_groups, track_artists, tracks } from "./db/schema";
 import { file } from "bun";
+import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
+import { ingestTrack } from "~/services/ingestTrack";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -239,6 +241,76 @@ const server = Bun.serve({
           "Content-Length": String(audioFile.size),
         },
       });
+    },
+    "/import": async (req) => {
+      // Handle CORS preflight
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST",
+            "Access-Control-Allow-Headers": "Content-Type",
+          },
+        });
+      }
+
+      // Safely parse JSON
+      let body;
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json(
+          { message: "invalid or empty JSON body" },
+          { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
+        );
+      }
+
+      const url = body?.url;
+
+      if (!url) {
+        return Response.json(
+          {
+            message: "no url sent",
+          },
+          {
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+            },
+            status: 500,
+          },
+        );
+      }
+
+      const urls = await getAllUrlsFromPlaylist(url);
+
+      try {
+        urls.forEach((url) => ingestTrack(url));
+      } catch (err) {
+        return Response.json(
+          {
+            message: `error while ingesting tracks: ${(err as Error).message}`,
+          },
+          {
+            status: 500,
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+            },
+          },
+        );
+      }
+
+      return Response.json(
+        {
+          message: "ingested tracks",
+        },
+        {
+          status: 200,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
     },
   },
   hostname: "0.0.0.0",
