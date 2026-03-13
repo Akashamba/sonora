@@ -4,11 +4,16 @@ import { artists, release_groups, track_artists, tracks } from "./db/schema";
 import { file } from "bun";
 import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
 import { ingestTrack } from "~/services/ingestTrack";
+import { readdirSync, readFileSync } from "fs";
+
+const index = readFileSync("src/app/index.html", "utf8");
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
   routes: {
-    "/": new Response("Hello!"),
+    "/": new Response(index, {
+      headers: { "Content-Type": "text/html" },
+    }),
     "/tracks": async () => {
       const rows = await db
         .select({
@@ -285,7 +290,10 @@ const server = Bun.serve({
       const urls = await getAllUrlsFromPlaylist(url);
 
       try {
-        urls.forEach((url) => ingestTrack(url));
+        // urls.forEach((url) => ingestTrack(url));
+        for (let url of urls) {
+          await ingestTrack(url);
+        }
       } catch (err) {
         return Response.json(
           {
@@ -311,6 +319,32 @@ const server = Bun.serve({
           },
         },
       );
+    },
+    "/stream": async () => {
+      const folderPath = "audio"; // replace with your folder
+
+      // Get all file names
+      const tracks = readdirSync(folderPath);
+
+      // Pick a random track
+      const trackPath = tracks[Math.floor(Math.random() * tracks.length)];
+
+      console.log(`audio/${trackPath}`);
+
+      const audioFile = file(`audio/${trackPath}`);
+      const exists = await audioFile.exists();
+
+      if (!exists) {
+        console.log("no file");
+        return new Response("File not found", { status: 404 });
+      }
+
+      return new Response(audioFile, {
+        headers: {
+          "Content-Type": "audio/mp4",
+          "Content-Length": String(audioFile.size),
+        },
+      });
     },
   },
   hostname: "0.0.0.0",

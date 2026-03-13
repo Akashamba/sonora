@@ -676,16 +676,17 @@
       // ════════════════════════════════════════════
       //  CONFIG — edit this block
       // ════════════════════════════════════════════
-      const API_BASE = "http://localhost:3000"; // ← your API base URL
+      // const API_BASE = "http://localhost:3000"; // ← your API base URL
 
       const ENDPOINTS = {
-        songs: () => `${API_BASE}/tracks`,
-        albums: () => `${API_BASE}/release-groups`,
-        artists: () => `${API_BASE}/artists`,
-        albumTracks: (id) => `${API_BASE}/release-groups/${id}/tracks`,
-        artistTracks: (id) => `${API_BASE}/artists/${id}/tracks`,
-        streamTrack: (id) => `${API_BASE}/tracks/${id}/stream`, // or /file
-        importUrl: () => `${API_BASE}/import`,
+        songs: () => `/tracks`,
+        albums: () => `/release-groups`,
+        artists: () => `/artists`,
+        albumTracks: (id) => `/release-groups/${id}/tracks`,
+        artistTracks: (id) => `/artists/${id}/tracks`,
+        stream: () => `/stream`,
+        streamTrack: (id) => `/tracks/${id}/stream`, // or /file
+        importUrl: () => `/import`,
       };
       // ════════════════════════════════════════════
 
@@ -712,6 +713,20 @@
         const r = await fetch(url);
         if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
         return r.json();
+      }
+      // From CHATGPT on Mar12: helper to fetch & play a random track
+      async function playRandomTrack() {
+        try {
+          // /stream returns a random track from the server
+          audio.src = ENDPOINTS.stream();
+          audio.load();
+          await audio.play();
+          document.getElementById("player-art").classList.add("spinning");
+          showPlayState(true);
+        } catch (err) {
+          console.warn("Failed to play random track:", err);
+          showPlayState(false);
+        }
       }
 
       // ── Navigation ──
@@ -1017,10 +1032,12 @@
           `${(cur / dur) * 100}%`;
       });
 
+      // CHATGPT Mar 12: override the 'ended' event to auto-play next random track
       audio.addEventListener("ended", () => {
         showPlayState(false);
         document.getElementById("player-art").classList.remove("spinning");
         document.getElementById("progress-fill").style.width = "100%";
+        playRandomTrack(); // auto-trigger next track
       });
 
       // ── Import ──
@@ -1054,6 +1071,23 @@
           status.textContent = `Error: ${e.message}`;
         }
       }
+
+      // CHATGPT Mar 12: add a "Next" button to the player controls
+      const controls = document.querySelector(".player-controls");
+      const nextBtn = document.createElement("button");
+      nextBtn.className = "ctrl-btn";
+      nextBtn.title = "Next";
+      nextBtn.innerHTML = `
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M4 4v16l12-8zM16 4h2v16h-2z"/>
+    </svg>
+  `;
+      nextBtn.onclick = () => {
+        audio.pause();
+        audio.currentTime = 0;
+        playRandomTrack();
+      };
+      controls.appendChild(nextBtn);
 
       // ── Boot ──
       loadTabIfNeeded("songs");
