@@ -291,8 +291,9 @@ const server = Bun.serve({
 
       try {
         // urls.forEach((url) => ingestTrack(url));
-        for (let url of urls) {
-          await ingestTrack(url);
+        for (const url of urls) {
+          ingestTrack(url);
+          await new Promise((r) => setTimeout(r, 5000));
         }
       } catch (err) {
         return Response.json(

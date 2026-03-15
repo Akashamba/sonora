@@ -6,3 +6,6 @@
 
 # db
 tracks.sqlite
+
+# private notes
+/notes/private/
