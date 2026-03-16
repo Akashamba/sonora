@@ -310,6 +310,7 @@
         margin-bottom: 32px;
         position: relative;
         overflow: hidden;
+        border-radius: 100%;
       }
       .player-art img {
         width: 100%;
@@ -482,6 +483,23 @@
       <div id="songs-page" class="page active">
         <div class="page-title">Songs</div>
         <div class="page-subtitle" id="songs-subtitle">Loading…</div>
+        <input
+          id="songs-search"
+          placeholder="Search songs…"
+          oninput="filterList('songs')"
+          style="
+            width: 100%;
+            max-width: 420px;
+            margin-bottom: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+          "
+        />
         <div class="list" id="songs-list"></div>
       </div>
 
@@ -489,6 +507,23 @@
       <div id="albums-page" class="page">
         <div class="page-title">Albums</div>
         <div class="page-subtitle" id="albums-subtitle">Loading…</div>
+        <input
+          id="albums-search"
+          placeholder="Search albums…"
+          oninput="filterList('albums')"
+          style="
+            width: 100%;
+            max-width: 420px;
+            margin-bottom: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+          "
+        />
         <div class="list" id="albums-list"></div>
       </div>
 
@@ -496,6 +531,23 @@
       <div id="artists-page" class="page">
         <div class="page-title">Artists</div>
         <div class="page-subtitle" id="artists-subtitle">Loading…</div>
+        <input
+          id="artists-search"
+          placeholder="Search artists…"
+          oninput="filterList('artists')"
+          style="
+            width: 100%;
+            max-width: 420px;
+            margin-bottom: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+          "
+        />
         <div class="list" id="artists-list"></div>
       </div>
 
@@ -684,7 +736,8 @@
         artists: () => `/artists`,
         albumTracks: (id) => `/release-groups/${id}/tracks`,
         artistTracks: (id) => `/artists/${id}/tracks`,
-        stream: () => `/stream`,
+        randomTrackId: () => `/tracks/random`,
+        getTrackMetadata: (id) => `/tracks/${id}/metadata`, // or /file
         streamTrack: (id) => `/tracks/${id}/stream`, // or /file
         importUrl: () => `/import`,
       };
@@ -715,10 +768,27 @@
         return r.json();
       }
       // From CHATGPT on Mar12: helper to fetch & play a random track
-      async function playRandomTrack() {
+      async function playNext() {
         try {
           // /stream returns a random track from the server
-          audio.src = ENDPOINTS.stream();
+          const track = await apiFetch(ENDPOINTS.randomTrackId());
+
+          const trackInfo = await apiFetch(
+            ENDPOINTS.getTrackMetadata(track.id),
+          );
+
+          updatePlayer(trackInfo);
+
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: trackInfo.title,
+            artist: artistCredit(trackInfo.artists),
+            album: trackInfo.releaseGroup.title,
+            artwork: [
+              { src: "/cover.jpg", sizes: "512x512", type: "image/jpeg" },
+            ],
+          });
+
+          audio.src = ENDPOINTS.streamTrack(track.id);
           audio.load();
           await audio.play();
           document.getElementById("player-art").classList.add("spinning");
@@ -727,6 +797,32 @@
           console.warn("Failed to play random track:", err);
           showPlayState(false);
         }
+      }
+
+      async function playPrevious() {}
+
+      function filterList(type) {
+        const input = document.getElementById(`${type}-search`);
+        if (!input) return;
+
+        const q = input.value.toLowerCase();
+        const list = document.getElementById(`${type}-list`);
+        const items = list.querySelectorAll(".list-item");
+
+        items.forEach((item) => {
+          const text = item.dataset.search || "";
+          item.style.display = text.includes(q) ? "" : "none";
+        });
+      }
+
+      function updatePlayer(track) {
+        document.getElementById("player-track").textContent = track.title;
+        document.getElementById("player-artist").textContent = artistCredit(
+          track.artists,
+        );
+        document.getElementById("time-total").textContent = fmt(track.length);
+        document.getElementById("progress-fill").style.width = "0%";
+        document.getElementById("time-current").textContent = "0:00";
       }
 
       // ── Navigation ──
@@ -818,7 +914,39 @@
         el.querySelector(".play-btn").onclick = (e) => {
           e.stopPropagation();
           openPlayer(s);
+          //  lock screen media controls
+          if ("mediaSession" in navigator) {
+            navigator.mediaSession.setActionHandler("nexttrack", () => {
+              playNext();
+            });
+
+            navigator.mediaSession.setActionHandler("previoustrack", () => {
+              playPrevious();
+            });
+
+            // Optional: disable seek buttons
+            navigator.mediaSession.setActionHandler("seekforward", null);
+            navigator.mediaSession.setActionHandler("seekbackward", null);
+          }
+
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: s.title,
+            artist: credit,
+            album: album,
+            artwork: [
+              { src: "/cover.jpg", sizes: "512x512", type: "image/jpeg" },
+            ],
+          });
         };
+
+        el.dataset.search = (
+          s.title +
+          " " +
+          credit +
+          " " +
+          album
+        ).toLowerCase();
+
         return el;
       }
 
@@ -860,6 +988,13 @@
     </div>
   `;
         el.onclick = () => openAlbum(a);
+
+        el.dataset.search = (
+          a.title +
+          " " +
+          (a.musicbrainz_primary_type ?? "")
+        ).toLowerCase();
+
         return el;
       }
 
@@ -933,6 +1068,9 @@
     </div>
   `;
         el.onclick = () => openArtist(a);
+
+        el.dataset.search = a.name.toLowerCase();
+
         return el;
       }
 
@@ -966,13 +1104,7 @@
         previousPage =
           document.querySelector(".page.active")?.id ?? `${currentTab}-page`;
 
-        document.getElementById("player-track").textContent = song.title;
-        document.getElementById("player-artist").textContent = fmtDate(
-          song.first_release_date,
-        );
-        document.getElementById("time-total").textContent = fmt(song.length);
-        document.getElementById("progress-fill").style.width = "0%";
-        document.getElementById("time-current").textContent = "0:00";
+        updatePlayer(song);
 
         const artEl = document.getElementById("player-art");
         artEl.innerHTML = "♪";
@@ -1023,6 +1155,8 @@
         );
       }
 
+      audio.addEventListener("change", () => {});
+
       audio.addEventListener("timeupdate", () => {
         const cur = audio.currentTime;
         const dur = audio.duration;
@@ -1037,7 +1171,7 @@
         showPlayState(false);
         document.getElementById("player-art").classList.remove("spinning");
         document.getElementById("progress-fill").style.width = "100%";
-        playRandomTrack(); // auto-trigger next track
+        playNext(); // auto-trigger next track
       });
 
       // ── Import ──
@@ -1085,7 +1219,7 @@
       nextBtn.onclick = () => {
         audio.pause();
         audio.currentTime = 0;
-        playRandomTrack();
+        playNext();
       };
       controls.appendChild(nextBtn);
 

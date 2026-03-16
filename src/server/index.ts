@@ -223,6 +223,94 @@ const server = Bun.serve({
         },
       );
     },
+    "/tracks/random": async () => {
+      const folderPath = "audio";
+      const track_files = readdirSync(folderPath);
+      const trackPath =
+        track_files[Math.floor(Math.random() * track_files.length)] || "";
+
+      const [track] = await db
+        .select({ id: tracks.id })
+        .from(tracks)
+        .where(eq(tracks.file_path, "audio/" + trackPath));
+
+      if (!track) {
+        return Response.json(
+          { error: "INTERNAL SERVER ERROR" },
+          {
+            status: 504,
+          },
+        );
+      }
+
+      return Response.json({
+        id: track.id,
+      });
+    },
+    "/tracks/:id/metadata": async (req) => {
+      const { id } = req.params;
+
+      const rows = await db
+        .select({
+          trackId: tracks.id,
+          trackTitle: tracks.title,
+          trackLength: tracks.length,
+          artistId: artists.id,
+          artistName: artists.name,
+          artistPosition: track_artists.pos,
+          artistJoinphrase: track_artists.joinphrase,
+          releaseGroupId: release_groups.id,
+          releaseGroupTitle: release_groups.title,
+        })
+        .from(tracks)
+        .where(eq(tracks.id, id))
+        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
+        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
+        .leftJoin(
+          release_groups,
+          eq(release_groups.id, tracks.release_group_id),
+        );
+
+      const tracksMap = new Map();
+
+      for (const row of rows) {
+        if (!tracksMap.has(row.trackId)) {
+          tracksMap.set(row.trackId, {
+            id: row.trackId,
+            title: row.trackTitle,
+            length: row.trackLength,
+            releaseGroup: {
+              id: row.releaseGroupId,
+              title: row.releaseGroupTitle,
+            },
+            artists: [],
+          });
+        }
+
+        if (row.artistId) {
+          tracksMap.get(row.trackId).artists.push({
+            id: row.artistId,
+            name: row.artistName,
+            pos: row.artistPosition,
+            joinphrase: row.artistJoinphrase,
+          });
+        }
+      }
+
+      const data = Array.from(tracksMap.values());
+
+      return Response.json(
+        {
+          status: "success",
+          ...data[0],
+        },
+        {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
+    },
     "/tracks/:id/stream": async (req) => {
       const { id } = req.params;
 
@@ -320,32 +408,6 @@ const server = Bun.serve({
           },
         },
       );
-    },
-    "/stream": async () => {
-      const folderPath = "audio"; // replace with your folder
-
-      // Get all file names
-      const tracks = readdirSync(folderPath);
-
-      // Pick a random track
-      const trackPath = tracks[Math.floor(Math.random() * tracks.length)];
-
-      console.log(`audio/${trackPath}`);
-
-      const audioFile = file(`audio/${trackPath}`);
-      const exists = await audioFile.exists();
-
-      if (!exists) {
-        console.log("no file");
-        return new Response("File not found", { status: 404 });
-      }
-
-      return new Response(audioFile, {
-        headers: {
-          "Content-Type": "audio/mp4",
-          "Content-Length": String(audioFile.size),
-        },
-      });
     },
   },
   hostname: "0.0.0.0",
