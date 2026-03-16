@@ -89,6 +89,16 @@
         color: var(--accent);
         border-bottom-color: var(--accent);
       }
+      .import-btn {
+        font-size: x-large;
+        background-color: #c8f060;
+        text-align: center;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 100%;
+        border-bottom-width: 0px;
+      }
 
       /* ── MAIN ── */
       main {
@@ -467,21 +477,87 @@
         font-size: 12px;
         line-height: 1.8;
       }
+
+      /* Now playing button */
+
+      .now-playing {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #c8f060;
+  color: #262626;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: system-ui, sans-serif;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  height: 14px;
+  gap: 3px;
+}
+
+.bars span {
+  width: 3px;
+  height: 6px;
+  background: rgb(30, 30, 70);
+  border-radius: 2px;
+  animation: equalize 1s infinite ease-in-out;
+}
+
+.bars span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.bars span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.now-playing.paused .bars span {
+  animation: none;
+  height: 4px;
+}
+
+@keyframes equalize {
+  0%, 100% {
+    height: 4px;
+  }
+  50% {
+    height: 14px;
+  }
+}
     </style>
   </head>
   <body>
     <nav>
       <div class="logo">music.</div>
-      <button class="nav-btn active" onclick="showTab('songs')">Songs</button>
-      <button class="nav-btn" onclick="showTab('albums')">Albums</button>
-      <button class="nav-btn" onclick="showTab('artists')">Artists</button>
-      <button class="nav-btn" onclick="showTab('import')">+ Import</button>
+        <button class="nav-btn active" onclick="showTab('songs')">Songs</button>
+        <button class="nav-btn" onclick="showTab('albums')">Albums</button>
+        <button class="nav-btn" onclick="showTab('artists')">Artists</button>
+      </div>
     </nav>
 
     <main>
       <!-- SONGS -->
       <div id="songs-page" class="page active">
-        <div class="page-title">Songs</div>
+        <div class="page-title" style="display: flex; justify-content: space-between;">
+          <span>Songs</span>
+         <div>
+           <button id="now-playing" class="now-playing paused" onclick="showPage('player-page')">
+            <span class="bars">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            Now Playing
+          </button>
+           <button class="nav-btn import-btn" onclick="showTab('import')">+</button>
+         </div>
+        </div>
         <div class="page-subtitle" id="songs-subtitle">Loading…</div>
         <input
           id="songs-search"
@@ -495,7 +571,7 @@
             border: 1px solid var(--border);
             color: var(--text);
             font-family: var(--mono);
-            font-size: 13px;
+            font-size: 16px;
             padding: 8px 10px;
             outline: none;
           "
@@ -505,7 +581,20 @@
 
       <!-- ALBUMS -->
       <div id="albums-page" class="page">
-        <div class="page-title">Albums</div>
+        <div class="page-title" style="display: flex; justify-content: space-between;">
+          <span>Songs</span>
+          <div>
+           <button id="now-playing" class="now-playing paused" onclick="showPage('player-page')">
+            <span class="bars">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            Now Playing
+          </button>
+           <button class="nav-btn import-btn" onclick="showTab('import')">+</button>
+         </div>
+        </div>
         <div class="page-subtitle" id="albums-subtitle">Loading…</div>
         <input
           id="albums-search"
@@ -519,7 +608,7 @@
             border: 1px solid var(--border);
             color: var(--text);
             font-family: var(--mono);
-            font-size: 13px;
+            font-size: 16px;
             padding: 8px 10px;
             outline: none;
           "
@@ -529,7 +618,20 @@
 
       <!-- ARTISTS -->
       <div id="artists-page" class="page">
-        <div class="page-title">Artists</div>
+        <div class="page-title" style="display: flex; justify-content: space-between;">
+          <span>Songs</span>
+          <div>
+           <button id="now-playing" class="now-playing paused" onclick="showPage('player-page')">
+            <span class="bars">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            Now Playing
+          </button>
+           <button class="nav-btn import-btn" onclick="showTab('import')">+</button>
+         </div>
+        </div>
         <div class="page-subtitle" id="artists-subtitle">Loading…</div>
         <input
           id="artists-search"
@@ -543,7 +645,7 @@
             border: 1px solid var(--border);
             color: var(--text);
             font-family: var(--mono);
-            font-size: 13px;
+            font-size: 16px;
             padding: 8px 10px;
             outline: none;
           "
@@ -568,7 +670,7 @@
               border: 1px solid var(--border);
               color: var(--text);
               font-family: var(--mono);
-              font-size: 13px;
+              font-size: 16px;
               padding: 12px;
               resize: vertical;
               outline: none;
@@ -913,6 +1015,7 @@
   `;
         el.querySelector(".play-btn").onclick = (e) => {
           e.stopPropagation();
+          togglePlayPause()
           openPlayer(s);
           //  lock screen media controls
           if ("mediaSession" in navigator) {
@@ -922,6 +1025,14 @@
 
             navigator.mediaSession.setActionHandler("previoustrack", () => {
               playPrevious();
+            });
+            
+            navigator.mediaSession.setActionHandler("pause", () => {
+              togglePlayPause()
+            });
+            
+            navigator.mediaSession.setActionHandler("play", () => {
+              togglePlayPause()
             });
 
             // Optional: disable seek buttons
@@ -1140,10 +1251,12 @@
         if (audio.paused) {
           audio.play();
           document.getElementById("player-art").classList.add("spinning");
+          document.getElementById("now-playing").classList.remove("paused");
           showPlayState(true);
         } else {
           audio.pause();
           document.getElementById("player-art").classList.remove("spinning");
+          document.getElementById("now-playing").classList.add("paused");
           showPlayState(false);
         }
       }
