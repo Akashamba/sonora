@@ -31,6 +31,8 @@ export const release_groups = sqliteTable("release_groups_table", {
   title: text().notNull(),
   cover_art_url: text(),
   first_release_date: int({ mode: "timestamp_ms" }).notNull(),
+  cover_art_url_thumbnail_large: text(),
+  cover_art_url_thumbnail_small: text(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(new Date()),

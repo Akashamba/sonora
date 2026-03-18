@@ -4,7 +4,14 @@ import { release_groups } from "../schema";
 export async function upsertReleaseGroup(
   tx: Transaction,
   release: {
-    "release-group": { id: string; "primary-type": string; title: string };
+    "release-group": {
+      id: string;
+      "primary-type": string;
+      title: string;
+      cover_art_url?: string;
+      cover_art_url_thumbnail_large?: string;
+      cover_art_url_thumbnail_small?: string;
+    };
     date: string;
   },
 ) {
@@ -14,7 +21,11 @@ export async function upsertReleaseGroup(
       musicbrainz_release_group_id: release["release-group"].id,
       musicbrainz_primary_type: release["release-group"]["primary-type"],
       title: release["release-group"].title,
-      cover_art_url: "",
+      cover_art_url: release["release-group"].cover_art_url,
+      cover_art_url_thumbnail_large:
+        release["release-group"].cover_art_url_thumbnail_large,
+      cover_art_url_thumbnail_small:
+        release["release-group"].cover_art_url_thumbnail_small,
       first_release_date: new Date(release.date),
     })
     .onConflictDoUpdate({

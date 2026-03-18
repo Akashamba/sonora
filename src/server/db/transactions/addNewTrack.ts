@@ -12,7 +12,14 @@ import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
 
 export interface TrackInfoType {
   release: {
-    "release-group": { id: string; "primary-type": string; title: string };
+    "release-group": {
+      id: string;
+      "primary-type": string;
+      title: string;
+      cover_art_url?: string;
+      cover_art_url_thumbnail_large?: string;
+      cover_art_url_thumbnail_small?: string;
+    };
     date: string;
   };
   youtubeId: string;

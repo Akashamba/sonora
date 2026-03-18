@@ -43,7 +43,7 @@ export async function ingestTrack(url: string) {
 
     // Extract recording and release information with fallback
     const [recording, release] =
-      extractRecordingAndRelease(musicbrainzmetadata);
+      await extractRecordingAndRelease(musicbrainzmetadata);
 
     // If not, download track
     const filePath = `audio/${sanitizeFileName(recording.title)}.m4a`;

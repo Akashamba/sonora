@@ -1,4 +1,3 @@
-import { fileTypeFromFile } from "file-type";
 import { $ } from "bun";
 
 type ParsedYTMetadata = {
@@ -272,7 +271,30 @@ export function findFirstCompleteRelease(recording: any) {
   return release;
 }
 
-export function extractRecordingAndRelease(musicbrainzmetadata: any) {
+async function getCoverArtForRelease(release: any) {
+  const res = await fetch(
+    `https://coverartarchive.org/release-group/${release["release-group"].id}`,
+    {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "sonora/0.1",
+      },
+    },
+  );
+
+  if (res.ok) {
+    const data = await res.json();
+    release["release-group"].cover_art_url = data.images[0].image;
+    release["release-group"].cover_art_url_thumbnail_large =
+      data.images[0].thumbnails.large;
+    release["release-group"].cover_art_url_thumbnail_small =
+      data.images[0].thumbnails.small;
+  }
+
+  return release;
+}
+
+export async function extractRecordingAndRelease(musicbrainzmetadata: any) {
   let recording = musicbrainzmetadata.recordings?.[0];
   let release;
 
@@ -290,6 +312,14 @@ export function extractRecordingAndRelease(musicbrainzmetadata: any) {
           id: null,
         },
       };
+    }
+
+    try {
+      release = await getCoverArtForRelease(release);
+    } catch {
+      console.log(
+        "Error while trying to get cover art. Proceeding without cover art.",
+      );
     }
   } else {
     console.log(

@@ -26,6 +26,8 @@ const server = Bun.serve({
           artistJoinphrase: track_artists.joinphrase,
           releaseGroupId: release_groups.id,
           releaseGroupTitle: release_groups.title,
+          releaseGroupCoverArt: release_groups.cover_art_url,
+          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
         })
         .from(tracks)
         .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
@@ -46,6 +48,8 @@ const server = Bun.serve({
             releaseGroup: {
               id: row.releaseGroupId,
               title: row.releaseGroupTitle,
+              coverArt: row.releaseGroupCoverArt,
+              thumbnail: row.releaseGroupThumbnail,
             },
             artists: [],
           });
@@ -167,6 +171,8 @@ const server = Bun.serve({
           artistJoinphrase: track_artists.joinphrase,
           releaseGroupId: release_groups.id,
           releaseGroupTitle: release_groups.title,
+          releaseGroupCoverArt: release_groups.cover_art_url,
+          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
         })
         .from(tracks)
         .where(
@@ -193,6 +199,8 @@ const server = Bun.serve({
             releaseGroup: {
               id: row.releaseGroupId,
               title: row.releaseGroupTitle,
+              coverArt: row.releaseGroupCoverArt,
+              thumbnail: row.releaseGroupThumbnail,
             },
             artists: [],
           });
@@ -243,9 +251,16 @@ const server = Bun.serve({
         );
       }
 
-      return Response.json({
-        id: track.id,
-      });
+      return Response.json(
+        {
+          id: track.id,
+        },
+        {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
     },
     "/tracks/:id/metadata": async (req) => {
       const { id } = req.params;
@@ -261,6 +276,8 @@ const server = Bun.serve({
           artistJoinphrase: track_artists.joinphrase,
           releaseGroupId: release_groups.id,
           releaseGroupTitle: release_groups.title,
+          releaseGroupCoverArt: release_groups.cover_art_url,
+          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
         })
         .from(tracks)
         .where(eq(tracks.id, id))
@@ -282,6 +299,8 @@ const server = Bun.serve({
             releaseGroup: {
               id: row.releaseGroupId,
               title: row.releaseGroupTitle,
+              coverArt: row.releaseGroupCoverArt,
+              thumbnail: row.releaseGroupThumbnail,
             },
             artists: [],
           });

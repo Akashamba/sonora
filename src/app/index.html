@@ -181,7 +181,7 @@
       .item-thumb {
         width: 44px;
         height: 44px;
-        border-radius: 2px;
+        border-radius: 4px;
         background: var(--border);
         flex-shrink: 0;
         overflow: hidden;
@@ -320,14 +320,14 @@
         margin-bottom: 32px;
         position: relative;
         overflow: hidden;
-        border-radius: 100%;
+        border-radius: 10px;
       }
       .player-art img {
         width: 100%;
         height: 100%;
         object-fit: cover;
       }
-      .player-art.spinning::after {
+      /* .player-art.spinning::after {
         content: "";
         position: absolute;
         inset: 0;
@@ -341,7 +341,7 @@
         to {
           transform: rotate(360deg);
         }
-      }
+      } */
 
       .player-track {
         font-family: var(--serif);
@@ -582,7 +582,7 @@
       <!-- ALBUMS -->
       <div id="albums-page" class="page">
         <div class="page-title" style="display: flex; justify-content: space-between;">
-          <span>Songs</span>
+          <span>Albums</span>
           <div>
            <button id="now-playing" class="now-playing paused" onclick="showPage('player-page')">
             <span class="bars">
@@ -619,7 +619,7 @@
       <!-- ARTISTS -->
       <div id="artists-page" class="page">
         <div class="page-title" style="display: flex; justify-content: space-between;">
-          <span>Songs</span>
+          <span>Artists</span>
           <div>
            <button id="now-playing" class="now-playing paused" onclick="showPage('player-page')">
             <span class="bars">
@@ -831,18 +831,19 @@
       //  CONFIG — edit this block
       // ════════════════════════════════════════════
       // const API_BASE = "http://localhost:3000"; // ← your API base URL
+const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
 
       const ENDPOINTS = {
-        songs: () => `/tracks`,
-        albums: () => `/release-groups`,
-        artists: () => `/artists`,
-        albumTracks: (id) => `/release-groups/${id}/tracks`,
-        artistTracks: (id) => `/artists/${id}/tracks`,
-        randomTrackId: () => `/tracks/random`,
-        getTrackMetadata: (id) => `/tracks/${id}/metadata`, // or /file
-        streamTrack: (id) => `/tracks/${id}/stream`, // or /file
-        importUrl: () => `/import`,
-      };
+        songs: () => `${API_BASE}/tracks`,
+        albums: () => `${API_BASE}/release-groups`,
+        artists: () => `${API_BASE}/artists`,
+        albumTracks: (id) => `${API_BASE}/release-groups/${id}/tracks`,
+        artistTracks: (id) => `${API_BASE}/artists/${id}/tracks`,
+        randomTrackId: () => `${API_BASE}/tracks/random`,
+        getTrackMetadata: (id) => `${API_BASE}/tracks/${id}/metadata`, // or /file
+        streamTrack: (id) => `${API_BASE}/tracks/${id}/stream`, // or /file
+        importUrl: () => `${API_BASE}/import`,
+      }
       // ════════════════════════════════════════════
 
       // ── State ──
@@ -886,7 +887,7 @@
             artist: artistCredit(trackInfo.artists),
             album: trackInfo.releaseGroup.title,
             artwork: [
-              { src: "/cover.jpg", sizes: "512x512", type: "image/jpeg" },
+              { src: trackInfo.releaseGroup.thumbnail ?? "", sizes: "512x512", type: "image/jpeg" },
             ],
           });
 
@@ -925,6 +926,14 @@
         document.getElementById("time-total").textContent = fmt(track.length);
         document.getElementById("progress-fill").style.width = "0%";
         document.getElementById("time-current").textContent = "0:00";
+
+        track.releaseGroup.coverArt ? 
+        document.getElementById("player-art").innerHTML = `<img src="${track.releaseGroup.coverArt}" />` : 
+        () => {
+          const artEl = document.getElementById("player-art");
+          artEl.innerHTML = "♪";
+          artEl.classList.remove("spinning")
+        };
       }
 
       // ── Navigation ──
@@ -1001,7 +1010,7 @@
         const album = s.releaseGroup?.title ?? "";
         const meta = [credit, album].filter(Boolean).join(" · ");
         el.innerHTML = `
-    <div class="item-thumb">♪</div>
+    ${s.releaseGroup && s.releaseGroup.thumbnail ? `<img class='item-thumb' src="${s.releaseGroup.thumbnail}" />` : "<div class='item-thumb'>♪</div>"}
     <div class="item-info">
       <div class="item-title">${s.title}</div>
       <div class="item-meta">${meta}</div>
@@ -1045,7 +1054,7 @@
             artist: credit,
             album: album,
             artwork: [
-              { src: "/cover.jpg", sizes: "512x512", type: "image/jpeg" },
+              { src: s.releaseGroup.thumbnail ?? "", sizes: "512x512", type: "image/jpeg" },
             ],
           });
         };
@@ -1086,7 +1095,7 @@
         const el = document.createElement("div");
         el.className = "list-item";
         el.innerHTML = `
-    <div class="item-thumb">${a.cover_art_url ? `<img src="${a.cover_art_url}" alt="">` : "💿"}</div>
+    <div class="item-thumb">${a.cover_art_url_thumbnail_small ? `<img class='item-thumb' src="${a.cover_art_url_thumbnail_small}" alt="">` : "💿"}</div>
     <div class="item-info">
       <div class="item-title">${a.title}</div>
       <div class="item-meta">${fmtDate(a.first_release_date)}</div>
@@ -1132,7 +1141,11 @@
             ? ""
             : '<div class="state-msg">No tracks found.</div>';
           tracks.forEach((s, i) => {
-            const el = songItem(s);
+            const el = songItem({...s, releaseGroup: {
+              title: album.title,
+              thumbnail: album.thumbnail,
+              coverArt: album.cover_art_url
+            }});
             // prepend track number
             el.querySelector(".item-thumb").textContent = i + 1;
             list.appendChild(el);
@@ -1217,10 +1230,6 @@
 
         updatePlayer(song);
 
-        const artEl = document.getElementById("player-art");
-        artEl.innerHTML = "♪";
-        artEl.classList.remove("spinning");
-
         showPage("player-page");
 
         const streamUrl = ENDPOINTS.streamTrack(song.id);
@@ -1229,7 +1238,6 @@
         audio
           .play()
           .then(() => {
-            artEl.classList.add("spinning");
             showPlayState(true);
           })
           .catch((err) => {
