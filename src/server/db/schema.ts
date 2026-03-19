@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { int, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const tracks = sqliteTable("tracks_table", {
   id: text()
@@ -16,10 +16,10 @@ export const tracks = sqliteTable("tracks_table", {
   file_path: text().notNull(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
   updated_at: int("updated_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
 });
 
 export const release_groups = sqliteTable("release_groups_table", {
@@ -35,10 +35,10 @@ export const release_groups = sqliteTable("release_groups_table", {
   cover_art_url_thumbnail_small: text(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
   updated_at: int("updated_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
 });
 
 export const artists = sqliteTable("artists_table", {
@@ -49,10 +49,25 @@ export const artists = sqliteTable("artists_table", {
   name: text().notNull(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
   updated_at: int("updated_at", { mode: "timestamp_ms" })
     .notNull()
-    .default(new Date()),
+    .$defaultFn(() => new Date()),
+});
+
+export const queue = sqliteTable("queue_table", {
+  // eventually this should handle queues for multiple users (for demos and just to show I can)
+  id: text()
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  track_id: text().references(() => tracks.id, { onDelete: "cascade" }),
+  position: real().notNull(),
+  created_at: int("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updated_at: int("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 /* Join Tables */

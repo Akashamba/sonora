@@ -1,6 +1,12 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { artists, release_groups, track_artists, tracks } from "./db/schema";
+import {
+  artists,
+  queue,
+  release_groups,
+  track_artists,
+  tracks,
+} from "./db/schema";
 import { file } from "bun";
 import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
 import { ingestTrack } from "~/services/ingestTrack";
@@ -232,19 +238,58 @@ const server = Bun.serve({
       );
     },
     "/tracks/random": async () => {
-      const folderPath = "audio";
-      const track_files = readdirSync(folderPath);
-      const trackPath =
-        track_files[Math.floor(Math.random() * track_files.length)] || "";
+      const MIN = 25;
+
+      const queueTop = await db.transaction(async (tx) => {
+        // consume one item
+        const queueTop = db
+          .delete(queue)
+          .orderBy(queue.position)
+          .limit(1)
+          .returning({ track_id: queue.track_id })
+          .get();
+
+        const count = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(queue);
+
+        if (count[0]?.count! < MIN) {
+          // refill
+          const rows = await db
+            .select({ id: tracks.id })
+            .from(tracks)
+            .orderBy(sql`RANDOM()`)
+            .limit(20);
+
+          await db.insert(queue).values(
+            rows.map((r, i) => ({
+              track_id: r.id,
+              position: i + 1,
+            })),
+          );
+          console.log("queue refilled", 20);
+        }
+
+        return queueTop;
+      });
+
+      if (!queueTop) {
+        return Response.json(
+          { error: "INTERNAL SERVER ERROR: Queue is empty" },
+          {
+            status: 504,
+          },
+        );
+      }
 
       const [track] = await db
         .select({ id: tracks.id })
         .from(tracks)
-        .where(eq(tracks.file_path, "audio/" + trackPath));
+        .where(eq(tracks.id, queueTop?.track_id!));
 
       if (!track) {
         return Response.json(
-          { error: "INTERNAL SERVER ERROR" },
+          { error: "INTERNAL SERVER ERROR: Track not found" },
           {
             status: 504,
           },
@@ -254,6 +299,71 @@ const server = Bun.serve({
       return Response.json(
         {
           id: track.id,
+        },
+        {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
+    },
+    "/queue": async () => {
+      const rows = await db
+        .select({
+          trackId: tracks.id,
+          trackTitle: tracks.title,
+          trackLength: tracks.length,
+          queuePos: queue.position,
+          artistId: artists.id,
+          artistName: artists.name,
+          artistPosition: track_artists.pos,
+          artistJoinphrase: track_artists.joinphrase,
+          releaseGroupId: release_groups.id,
+          releaseGroupTitle: release_groups.title,
+          releaseGroupCoverArt: release_groups.cover_art_url,
+          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
+        })
+        .from(queue)
+        .innerJoin(tracks, eq(tracks.id, queue.track_id))
+        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
+        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
+        .leftJoin(
+          release_groups,
+          eq(release_groups.id, tracks.release_group_id),
+        )
+        .orderBy(queue.position)
+        .limit(20);
+
+      const tracksMap = new Map();
+      for (const row of rows) {
+        if (!tracksMap.has(row.trackId)) {
+          tracksMap.set(row.trackId, {
+            id: row.trackId,
+            title: row.trackTitle,
+            length: row.trackLength,
+            releaseGroup: {
+              id: row.releaseGroupId,
+              title: row.releaseGroupTitle,
+              coverArt: row.releaseGroupCoverArt,
+              thumbnail: row.releaseGroupThumbnail,
+            },
+            artists: [],
+          });
+        }
+        if (row.artistId) {
+          tracksMap.get(row.trackId).artists.push({
+            id: row.artistId,
+            name: row.artistName,
+            pos: row.artistPosition,
+            joinphrase: row.artistJoinphrase,
+          });
+        }
+      }
+      const data = Array.from(tracksMap.values());
+
+      return Response.json(
+        {
+          data: data,
         },
         {
           headers: {
