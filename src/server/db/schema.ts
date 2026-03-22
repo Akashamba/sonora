@@ -1,3 +1,4 @@
+import { uuidv7 } from "uuidv7";
 import { randomUUID } from "crypto";
 import { int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -59,9 +60,8 @@ export const queue = sqliteTable("queue_table", {
   // eventually this should handle queues for multiple users (for demos and just to show I can)
   id: text()
     .primaryKey()
-    .$defaultFn(() => randomUUID()),
+    .$defaultFn(() => uuidv7()),
   track_id: text().references(() => tracks.id, { onDelete: "cascade" }),
-  position: real().notNull(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

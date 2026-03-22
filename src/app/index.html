@@ -839,19 +839,18 @@
       //  CONFIG — edit this block
       // ════════════════════════════════════════════
       // const API_BASE = "http://localhost:3000"; // ← your API base URL
-const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
 
       const ENDPOINTS = {
-        songs: () => `${API_BASE}/tracks`,
-        albums: () => `${API_BASE}/release-groups`,
-        artists: () => `${API_BASE}/artists`,
-        albumTracks: (id) => `${API_BASE}/release-groups/${id}/tracks`,
-        artistTracks: (id) => `${API_BASE}/artists/${id}/tracks`,
-        randomTrackId: () => `${API_BASE}/tracks/random`,
-        getTrackMetadata: (id) => `${API_BASE}/tracks/${id}/metadata`, // or /file
-        streamTrack: (id) => `${API_BASE}/tracks/${id}/stream`, // or /file
-        importUrl: () => `${API_BASE}/import`,
-        queue: () => `${API_BASE}/queue`,
+        home: () => `/home`,
+        albums: () => `/release-groups`,
+        artists: () => `/artists`,
+        albumTracks: (id) => `/release-groups/${id}/tracks`,
+        artistTracks: (id) => `/artists/${id}/tracks`,
+        nextTrackId: () => `/tracks/next`,
+        getTrackMetadata: (id) => `/tracks/${id}/metadata`, // or /file
+        streamTrack: (id) => `/tracks/${id}/stream`, // or /file
+        importUrl: () => `/import`,
+        queue: () => `/queue`,
       }
       // ════════════════════════════════════════════
 
@@ -883,24 +882,29 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
       async function playNext() {
         try {
           // /stream returns a random track from the server
-          const track = await apiFetch(ENDPOINTS.randomTrackId());
+          const nextTrackResponse = await apiFetch(ENDPOINTS.nextTrackId());
+          await loadQueue()
 
-          const trackInfo = await apiFetch(
-            ENDPOINTS.getTrackMetadata(track.id),
+          const track = nextTrackResponse.data
+
+          const trackMetadataResponse = await apiFetch(
+            ENDPOINTS.getTrackMetadata(track.track_id),
           );
 
-          updatePlayer(trackInfo);
+          const trackMetadata = trackMetadataResponse.data
+
+          updatePlayer(trackMetadata);
 
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: trackInfo.title,
-            artist: artistCredit(trackInfo.artists),
-            album: trackInfo.releaseGroup.title,
+            title: trackMetadata.title,
+            artist: artistCredit(trackMetadata.artists),
+            album: trackMetadata.release_group.title,
             artwork: [
-              { src: trackInfo.releaseGroup.thumbnail ?? "", sizes: "512x512", type: "image/jpeg" },
+              { src: trackMetadata.release_group.cover_art_url_thumbnail_small ?? "", sizes: "512x512", type: "image/jpeg" },
             ],
           });
 
-          audio.src = ENDPOINTS.streamTrack(track.id);
+          audio.src = ENDPOINTS.streamTrack(track.track_id);
           audio.load();
           await audio.play();
           document.getElementById("player-art").classList.add("spinning");
@@ -936,8 +940,8 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
         document.getElementById("progress-fill").style.width = "0%";
         document.getElementById("time-current").textContent = "0:00";
 
-        track.releaseGroup.coverArt ? 
-        document.getElementById("player-art").innerHTML = `<img src="${track.releaseGroup.coverArt}" />` : 
+        track.release_group.cover_art_url_thumbnail_small ? 
+        document.getElementById("player-art").innerHTML = `<img src="${track.release_group.cover_art_url_thumbnail_small}" />` : 
         () => {
           const artEl = document.getElementById("player-art");
           artEl.innerHTML = "♪";
@@ -952,8 +956,8 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
         list.innerHTML = '<div class="state-msg">Loading queue…</div>';
 
         try {
-          const data = await apiFetch(ENDPOINTS.queue());
-          const tracks = data.data ?? data ?? [];
+          const res = await apiFetch(ENDPOINTS.queue());
+          const tracks = res.data.sort((a, b) => {return a.position > b.position}) ?? [];
 
           sub.textContent = `${tracks.length} upcoming`;
 
@@ -1024,7 +1028,8 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
         const sub = document.getElementById("songs-subtitle");
         list.innerHTML = '<div class="state-msg">Loading tracks…</div>';
         try {
-          const data = await apiFetch(ENDPOINTS.songs());
+          const data = await apiFetch(ENDPOINTS.home());
+          await loadQueue()
           const songs = data.data ?? (Array.isArray(data) ? data : []);
           sub.textContent = `${songs.length} tracks`;
           list.innerHTML = songs.length
@@ -1049,10 +1054,10 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
         const el = document.createElement("div");
         el.className = "list-item";
         const credit = artistCredit(s.artists);
-        const album = s.releaseGroup?.title ?? "";
+        const album = s.release_group?.title ?? "";
         const meta = [credit, album].filter(Boolean).join(" · ");
         el.innerHTML = `
-    ${s.releaseGroup && s.releaseGroup.thumbnail ? `<img class='item-thumb' src="${s.releaseGroup.thumbnail}" />` : "<div class='item-thumb'>♪</div>"}
+    ${s.release_group && s.release_group.cover_art_url_thumbnail_small ? `<img class='item-thumb' src="${s.release_group.cover_art_url_thumbnail_small}" />` : "<div class='item-thumb'>♪</div>"}
     <div class="item-info">
       <div class="item-title">${s.title}</div>
       <div class="item-meta">${meta}</div>
@@ -1096,7 +1101,7 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
             artist: credit,
             album: album,
             artwork: [
-              { src: s.releaseGroup.thumbnail ?? "", sizes: "512x512", type: "image/jpeg" },
+              { src: s.release_group.cover_art_url_thumbnail_small ?? "", sizes: "512x512", type: "image/jpeg" },
             ],
           });
         };
@@ -1175,18 +1180,15 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
         const list = document.getElementById("album-tracks-list");
         list.innerHTML = '<div class="state-msg">Loading tracks…</div>';
         try {
-          const data = await apiFetch(ENDPOINTS.albumTracks(album.id));
-          const tracks = Array.isArray(data)
-            ? data
-            : (data.tracks ?? data.data ?? []);
+          const res = await apiFetch(ENDPOINTS.albumTracks(album.id));
+          const tracks = res.data.tracks ?? [];
           list.innerHTML = tracks.length
             ? ""
             : '<div class="state-msg">No tracks found.</div>';
           tracks.forEach((s, i) => {
-            const el = songItem({...s, releaseGroup: {
+            const el = songItem({...s, release_group: {
               title: album.title,
-              thumbnail: album.thumbnail,
-              coverArt: album.cover_art_url
+              cover_art_url: album.cover_art_url
             }});
             // prepend track number
             el.querySelector(".item-thumb").textContent = i + 1;
@@ -1266,7 +1268,10 @@ const API_BASE = "http://akashs-macbook-air:3000"; // ← your API base URL
       }
 
       // ── Player ──
-      function openPlayer(song) {
+      async function openPlayer(song) {
+        const res = await apiFetch(ENDPOINTS.getTrackMetadata(song.id)) 
+        song = res.data
+
         previousPage =
           document.querySelector(".page.active")?.id ?? `${currentTab}-page`;
 

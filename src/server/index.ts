@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   artists,
@@ -10,270 +10,96 @@ import {
 import { file } from "bun";
 import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
 import { ingestTrack } from "~/services/ingestTrack";
-import { readdirSync, readFileSync } from "fs";
-
-const index = readFileSync("src/app/index.html", "utf8");
+import { readFileSync } from "fs";
+import { fetchTracksWithMetadata } from "./db/queries/fetchTrackWithMetadata";
+import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
+import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
   routes: {
-    "/": new Response(index, {
-      headers: { "Content-Type": "text/html" },
-    }),
-    "/tracks": async () => {
-      const rows = await db
-        .select({
-          trackId: tracks.id,
-          trackTitle: tracks.title,
-          trackLength: tracks.length,
-          artistId: artists.id,
-          artistName: artists.name,
-          artistPosition: track_artists.pos,
-          artistJoinphrase: track_artists.joinphrase,
-          releaseGroupId: release_groups.id,
-          releaseGroupTitle: release_groups.title,
-          releaseGroupCoverArt: release_groups.cover_art_url,
-          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
-        })
-        .from(tracks)
-        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
-        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
-        .leftJoin(
-          release_groups,
-          eq(release_groups.id, tracks.release_group_id),
-        );
+    "/": () => {
+      const index = readFileSync("src/app/index.html", "utf8");
+      return new Response(index, {
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+    "/home": async () => {
+      try {
+        const data = fetchTracksWithMetadata();
 
-      const tracksMap = new Map();
-
-      for (const row of rows) {
-        if (!tracksMap.has(row.trackId)) {
-          tracksMap.set(row.trackId, {
-            id: row.trackId,
-            title: row.trackTitle,
-            length: row.trackLength,
-            releaseGroup: {
-              id: row.releaseGroupId,
-              title: row.releaseGroupTitle,
-              coverArt: row.releaseGroupCoverArt,
-              thumbnail: row.releaseGroupThumbnail,
-            },
-            artists: [],
-          });
-        }
-
-        if (row.artistId) {
-          tracksMap.get(row.trackId).artists.push({
-            id: row.artistId,
-            name: row.artistName,
-            pos: row.artistPosition,
-            joinphrase: row.artistJoinphrase,
-          });
-        }
-      }
-
-      const data = Array.from(tracksMap.values());
-
-      return Response.json(
-        {
-          status: "success",
+        return Response.json({
           count: data.length,
           data: data,
-        },
-        {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      );
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
     },
     "/artists": async () => {
-      const allArtists = await db.select().from(artists);
-      return Response.json(allArtists, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
+      try {
+        const allArtists = db.select().from(artists).all();
+        return Response.json({ count: allArtists.length, data: allArtists });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
     },
     "/release-groups": async () => {
-      const allReleaseGroups = await db.select().from(release_groups);
-      return Response.json(allReleaseGroups, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
+      try {
+        const allReleaseGroups = db.select().from(release_groups).all();
+        return Response.json({
+          count: allReleaseGroups.length,
+          data: allReleaseGroups,
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
     },
     "/release-groups/:id/tracks": async (req) => {
-      const { id } = req.params;
-      const tracksInReleaseGroup = await db
-        .select({
-          releaseGroupsId: release_groups.id,
-          releaseGroupsTitle: release_groups.title,
-          releaseGroupsPrimaryType: release_groups.musicbrainz_primary_type,
-          releaseGroupsCoverArtUrl: release_groups.cover_art_url,
-          releaseGroupFirstReleaseDate: release_groups.first_release_date,
-          trackId: tracks.id,
-          trackTitle: tracks.title,
-          trackLength: tracks.length,
-        })
-        .from(release_groups)
-        .where(eq(release_groups.id, id))
-        .leftJoin(tracks, eq(tracks.release_group_id, release_groups.id));
-
-      if (tracksInReleaseGroup.length === 0) {
-        return Response.json(
-          {
-            status: "success",
-            message: "No tracks in this release group",
-            count: 0,
-          },
-          {
-            headers: {
-              "Access-Control-Allow-Origin": "*",
-            },
-          },
-        );
-      } else {
-        const releaseGroup = {
-          id: tracksInReleaseGroup[0]?.releaseGroupsId,
-          title: tracksInReleaseGroup[0]?.releaseGroupsTitle,
-          primaryType: tracksInReleaseGroup[0]?.releaseGroupsPrimaryType,
-          coverArtUrl: tracksInReleaseGroup[0]?.releaseGroupsCoverArtUrl,
-          firstReleaseDate:
-            tracksInReleaseGroup[0]?.releaseGroupFirstReleaseDate,
-          tracks: [] as any[],
-        };
-
-        tracksInReleaseGroup.forEach((t) => {
-          releaseGroup.tracks.push({
-            id: t.trackId,
-            title: t.trackTitle,
-            length: t.trackLength,
-          });
-        });
-
-        return Response.json(releaseGroup, {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        });
+      try {
+        const data = fetchReleaseWithTracks(req.params.id);
+        return Response.json({ data: data });
+      } catch {
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
     "/artists/:id/tracks": async (req) => {
-      const { id } = req.params;
-      const allTracks = await db
-        .select({ trackId: track_artists.track_id })
-        .from(artists)
-        .where(eq(artists.id, id))
-        .leftJoin(track_artists, eq(track_artists.artist_id, artists.id));
+      try {
+        const artistTrackIds = db
+          .select({ trackId: track_artists.track_id })
+          .from(artists)
+          .where(eq(artists.id, req.params.id))
+          .leftJoin(track_artists, eq(track_artists.artist_id, artists.id))
+          .all();
 
-      const rows = await db
-        .select({
-          trackId: tracks.id,
-          trackTitle: tracks.title,
-          trackLength: tracks.length,
-          artistId: artists.id,
-          artistName: artists.name,
-          artistPosition: track_artists.pos,
-          artistJoinphrase: track_artists.joinphrase,
-          releaseGroupId: release_groups.id,
-          releaseGroupTitle: release_groups.title,
-          releaseGroupCoverArt: release_groups.cover_art_url,
-          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
-        })
-        .from(tracks)
-        .where(
-          inArray(
-            tracks.id,
-            allTracks.map((t) => t.trackId || ""),
-          ),
-        )
-        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
-        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
-        .leftJoin(
-          release_groups,
-          eq(release_groups.id, tracks.release_group_id),
-        );
+        const data = fetchTracksWithMetadata({
+          trackIds: artistTrackIds.map((t) => t.trackId || ""),
+        });
 
-      const tracksMap = new Map();
-
-      for (const row of rows) {
-        if (!tracksMap.has(row.trackId)) {
-          tracksMap.set(row.trackId, {
-            id: row.trackId,
-            title: row.trackTitle,
-            length: row.trackLength,
-            releaseGroup: {
-              id: row.releaseGroupId,
-              title: row.releaseGroupTitle,
-              coverArt: row.releaseGroupCoverArt,
-              thumbnail: row.releaseGroupThumbnail,
-            },
-            artists: [],
-          });
-        }
-
-        if (row.artistId) {
-          tracksMap.get(row.trackId).artists.push({
-            id: row.artistId,
-            name: row.artistName,
-            pos: row.artistPosition,
-            joinphrase: row.artistJoinphrase,
-          });
-        }
-      }
-
-      const data = Array.from(tracksMap.values());
-
-      return Response.json(
-        {
-          status: "success",
+        return Response.json({
           count: data.length,
           data: data,
-        },
-        {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      );
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
     },
-    "/tracks/random": async () => {
-      const MIN = 25;
+    "/tracks/next": async () => {
+      const nextTrack = fetchNextTrackWithRefill();
 
-      const queueTop = await db.transaction(async (tx) => {
-        // consume one item
-        const queueTop = db
-          .delete(queue)
-          .orderBy(queue.position)
-          .limit(1)
-          .returning({ track_id: queue.track_id })
-          .get();
-
-        const count = await tx
-          .select({ count: sql<number>`count(*)` })
-          .from(queue);
-
-        if (count[0]?.count! < MIN) {
-          // refill
-          const rows = await db
-            .select({ id: tracks.id })
-            .from(tracks)
-            .orderBy(sql`RANDOM()`)
-            .limit(20);
-
-          await db.insert(queue).values(
-            rows.map((r, i) => ({
-              track_id: r.id,
-              position: i + 1,
-            })),
-          );
-          console.log("queue refilled", 20);
-        }
-
-        return queueTop;
-      });
-
-      if (!queueTop) {
+      if (!nextTrack || !nextTrack.track_id) {
         return Response.json(
           { error: "INTERNAL SERVER ERROR: Queue is empty" },
           {
@@ -282,171 +108,54 @@ const server = Bun.serve({
         );
       }
 
-      const [track] = await db
-        .select({ id: tracks.id })
-        .from(tracks)
-        .where(eq(tracks.id, queueTop?.track_id!));
-
-      if (!track) {
-        return Response.json(
-          { error: "INTERNAL SERVER ERROR: Track not found" },
-          {
-            status: 504,
-          },
-        );
-      }
-
-      return Response.json(
-        {
-          id: track.id,
-        },
-        {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      );
+      return Response.json({
+        data: { track_id: nextTrack.track_id },
+      });
     },
     "/queue": async () => {
-      const rows = await db
-        .select({
-          trackId: tracks.id,
-          trackTitle: tracks.title,
-          trackLength: tracks.length,
-          queuePos: queue.position,
-          artistId: artists.id,
-          artistName: artists.name,
-          artistPosition: track_artists.pos,
-          artistJoinphrase: track_artists.joinphrase,
-          releaseGroupId: release_groups.id,
-          releaseGroupTitle: release_groups.title,
-          releaseGroupCoverArt: release_groups.cover_art_url,
-          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
-        })
-        .from(queue)
-        .innerJoin(tracks, eq(tracks.id, queue.track_id))
-        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
-        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
-        .leftJoin(
-          release_groups,
-          eq(release_groups.id, tracks.release_group_id),
-        )
-        .orderBy(queue.position)
-        .limit(20);
+      try {
+        const queueTracks = db
+          .select({ trackId: queue.track_id, position: queue.id })
+          .from(queue)
+          .all();
 
-      const tracksMap = new Map();
-      for (const row of rows) {
-        if (!tracksMap.has(row.trackId)) {
-          tracksMap.set(row.trackId, {
-            id: row.trackId,
-            title: row.trackTitle,
-            length: row.trackLength,
-            releaseGroup: {
-              id: row.releaseGroupId,
-              title: row.releaseGroupTitle,
-              coverArt: row.releaseGroupCoverArt,
-              thumbnail: row.releaseGroupThumbnail,
-            },
-            artists: [],
-          });
-        }
-        if (row.artistId) {
-          tracksMap.get(row.trackId).artists.push({
-            id: row.artistId,
-            name: row.artistName,
-            pos: row.artistPosition,
-            joinphrase: row.artistJoinphrase,
-          });
-        }
+        const data = fetchTracksWithMetadata({
+          trackIds: queueTracks.map((t) => t.trackId || ""),
+        });
+
+        return Response.json({
+          count: data.length,
+          data: data.map((t) => ({
+            ...t,
+            position: queueTracks.find((q) => q.trackId === t.id)?.position,
+          })),
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
-      const data = Array.from(tracksMap.values());
-
-      return Response.json(
-        {
-          data: data,
-        },
-        {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      );
     },
     "/tracks/:id/metadata": async (req) => {
-      const { id } = req.params;
+      try {
+        const [data] = fetchTracksWithMetadata({ trackId: req.params.id });
 
-      const rows = await db
-        .select({
-          trackId: tracks.id,
-          trackTitle: tracks.title,
-          trackLength: tracks.length,
-          artistId: artists.id,
-          artistName: artists.name,
-          artistPosition: track_artists.pos,
-          artistJoinphrase: track_artists.joinphrase,
-          releaseGroupId: release_groups.id,
-          releaseGroupTitle: release_groups.title,
-          releaseGroupCoverArt: release_groups.cover_art_url,
-          releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
-        })
-        .from(tracks)
-        .where(eq(tracks.id, id))
-        .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
-        .leftJoin(artists, eq(artists.id, track_artists.artist_id))
-        .leftJoin(
-          release_groups,
-          eq(release_groups.id, tracks.release_group_id),
+        return Response.json({
+          data: data,
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
         );
-
-      const tracksMap = new Map();
-
-      for (const row of rows) {
-        if (!tracksMap.has(row.trackId)) {
-          tracksMap.set(row.trackId, {
-            id: row.trackId,
-            title: row.trackTitle,
-            length: row.trackLength,
-            releaseGroup: {
-              id: row.releaseGroupId,
-              title: row.releaseGroupTitle,
-              coverArt: row.releaseGroupCoverArt,
-              thumbnail: row.releaseGroupThumbnail,
-            },
-            artists: [],
-          });
-        }
-
-        if (row.artistId) {
-          tracksMap.get(row.trackId).artists.push({
-            id: row.artistId,
-            name: row.artistName,
-            pos: row.artistPosition,
-            joinphrase: row.artistJoinphrase,
-          });
-        }
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
-
-      const data = Array.from(tracksMap.values());
-
-      return Response.json(
-        {
-          status: "success",
-          ...data[0],
-        },
-        {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      );
     },
     "/tracks/:id/stream": async (req) => {
-      const { id } = req.params;
-
       const [track] = await db
         .select({ filePath: tracks.file_path })
         .from(tracks)
-        .where(eq(tracks.id, id));
+        .where(eq(tracks.id, req.params.id));
 
       if (!track) {
         return new Response("Track not found", { status: 404 });
