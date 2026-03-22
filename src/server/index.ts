@@ -1,7 +1,9 @@
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   artists,
+  history,
+  play_counts,
   queue,
   release_groups,
   track_artists,
@@ -165,6 +167,46 @@ const server = Bun.serve({
       const exists = await audioFile.exists();
 
       if (!exists) return new Response("File not found", { status: 404 });
+
+      // Set last played song as completed and update play counts
+      db.transaction((tx) => {
+        // get last played
+        const last_played = tx
+          .select({
+            id: history.id,
+            track_id: history.track_id,
+            completed: history.completed,
+            count: play_counts.count,
+          })
+          .from(history)
+          .leftJoin(play_counts, eq(play_counts.track_id, history.track_id))
+          .orderBy(desc(history.id))
+          .limit(1)
+          .get();
+
+        if (last_played?.completed === 0) {
+          // update history with completed 1
+          tx.update(history)
+            .set({ completed: 1 })
+            .where(eq(history.id, last_played?.id!))
+            .run();
+          // upsert song to play_counts with count 1 (default) or increment by 1
+          tx.insert(play_counts)
+            .values({ track_id: last_played?.track_id })
+            .onConflictDoUpdate({
+              target: play_counts.track_id,
+              set: { count: last_played?.count! + 1 },
+            })
+            .run();
+        }
+      });
+
+      // set now playing: add to history with completed=0 (default)
+      db.insert(history)
+        .values({
+          track_id: req.params.id,
+        })
+        .run();
 
       return new Response(audioFile, {
         headers: {

@@ -1,6 +1,6 @@
 import { uuidv7 } from "uuidv7";
 import { randomUUID } from "crypto";
-import { int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { int, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const tracks = sqliteTable("tracks_table", {
   id: text()
@@ -62,6 +62,38 @@ export const queue = sqliteTable("queue_table", {
     .primaryKey()
     .$defaultFn(() => uuidv7()),
   track_id: text().references(() => tracks.id, { onDelete: "cascade" }),
+  created_at: int("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updated_at: int("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const history = sqliteTable("history_table", {
+  // eventually this should handle history for multiple users (for demos and just to show I can)
+  id: text()
+    .primaryKey()
+    .$defaultFn(() => uuidv7()),
+  track_id: text().references(() => tracks.id, { onDelete: "cascade" }),
+  completed: int().default(0),
+  created_at: int("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updated_at: int("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const play_counts = sqliteTable("play_counts_table", {
+  // eventually this should handle counts for multiple users (for demos and just to show I can)
+  id: text()
+    .primaryKey()
+    .$defaultFn(() => uuidv7()),
+  track_id: text()
+    .references(() => tracks.id, { onDelete: "cascade" })
+    .unique(),
+  count: int().default(1),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
