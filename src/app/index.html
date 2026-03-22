@@ -327,21 +327,6 @@
         height: 100%;
         object-fit: cover;
       }
-      /* .player-art.spinning::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: conic-gradient(
-          transparent 0deg,
-          rgba(200, 240, 96, 0.08) 360deg
-        );
-        animation: spin 4s linear infinite;
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      } */
 
       .player-track {
         font-family: var(--serif);
@@ -562,7 +547,7 @@
         <input
           id="songs-search"
           placeholder="Search songs…"
-          oninput="filterList('songs')"
+          oninput="debouncedSearchSongs(this.value)"
           style="
             width: 100%;
             max-width: 420px;
@@ -847,11 +832,13 @@
         albumTracks: (id) => `/release-groups/${id}/tracks`,
         artistTracks: (id) => `/artists/${id}/tracks`,
         nextTrackId: () => `/tracks/next`,
-        getTrackMetadata: (id) => `/tracks/${id}/metadata`, // or /file
-        streamTrack: (id) => `/tracks/${id}/stream`, // or /file
+        getTrackMetadata: (id) => `/tracks/${id}/metadata`,
+        streamTrack: (id) => `/tracks/${id}/stream`,
         importUrl: () => `/import`,
         queue: () => `/queue`,
-      }
+        searchTracks: (q, limit = 50) =>
+          `/tracks/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=0`,
+      };
       // ════════════════════════════════════════════
 
       // ── State ──
@@ -859,6 +846,40 @@
       let previousPage = null;
       const audio = document.getElementById("audio-player");
       let progressInterval = null;
+
+      // ── Song search debounce ──
+      let _songsSearchTimer = null;
+
+      function debouncedSearchSongs(query) {
+        clearTimeout(_songsSearchTimer);
+        _songsSearchTimer = setTimeout(() => searchSongs(query), 300);
+      }
+
+      async function searchSongs(query) {
+        const list = document.getElementById("songs-list");
+        const sub = document.getElementById("songs-subtitle");
+
+        // Empty query → fall back to the full library
+        if (!query.trim()) {
+          loaded["songs"] = false;
+          loadSongs();
+          return;
+        }
+
+        list.innerHTML = '<div class="state-msg">Searching…</div>';
+        try {
+          const data = await apiFetch(ENDPOINTS.searchTracks(query));
+          const songs = data.data ?? (Array.isArray(data) ? data : []);
+          sub.textContent = `${songs.length} result${songs.length !== 1 ? "s" : ""} for "${query}"`;
+          list.innerHTML = songs.length
+            ? ""
+            : '<div class="state-msg">No results found.</div>';
+          songs.forEach((s) => list.appendChild(songItem(s)));
+        } catch (e) {
+          sub.textContent = "error";
+          list.innerHTML = `<div class="state-msg error">Search failed: ${e.message}</div>`;
+        }
+      }
 
       // ── Helpers ──
       function fmt(ms) {

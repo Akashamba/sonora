@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   artists,
@@ -28,7 +28,7 @@ const server = Bun.serve({
     },
     "/home": async () => {
       try {
-        const data = fetchTracksWithMetadata();
+        const data = fetchTracksWithMetadata({ topTracks: true });
 
         return Response.json({
           count: data.length,
@@ -114,6 +114,21 @@ const server = Bun.serve({
         data: { track_id: nextTrack.track_id },
       });
     },
+    "/tracks/search": (req) => {
+      const url = new URL(req.url);
+
+      const data = fetchTracksWithMetadata({
+        query: url.searchParams.get("q") ?? "",
+        limit: Number(url.searchParams.get("limit") ?? 20),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+      });
+
+      return Response.json({
+        data: data,
+        count: data.length,
+        offset: Number(url.searchParams.get("offset") ?? 0),
+      });
+    },
     "/queue": async () => {
       try {
         const queueTracks = db
@@ -154,6 +169,9 @@ const server = Bun.serve({
       }
     },
     "/tracks/:id/stream": async (req) => {
+      // enable long-lived streaming connectionj
+      server.timeout(req, 0);
+
       const [track] = await db
         .select({ filePath: tracks.file_path })
         .from(tracks)
