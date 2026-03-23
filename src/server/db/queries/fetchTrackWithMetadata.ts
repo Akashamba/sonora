@@ -60,7 +60,7 @@ export function fetchTracksWithMetadata(opts?: {
     const matches = db
       .selectDistinct({ track_id: history.track_id })
       .from(history)
-      .orderBy(history.id)
+      .orderBy(desc(history.id))
       .limit(10)
       .all();
     conditions.push(

@@ -832,6 +832,7 @@
         albumTracks: (id) => `/release-groups/${id}/tracks`,
         artistTracks: (id) => `/artists/${id}/tracks`,
         nextTrackId: () => `/tracks/next`,
+        prevTrackId: () => `/tracks/previous`,
         getTrackMetadata: (id) => `/tracks/${id}/metadata`,
         streamTrack: (id) => `/tracks/${id}/stream`,
         importUrl: () => `/import`,
@@ -902,7 +903,6 @@
       // From CHATGPT on Mar12: helper to fetch & play a random track
       async function playNext() {
         try {
-          // /stream returns a random track from the server
           const nextTrackResponse = await apiFetch(ENDPOINTS.nextTrackId());
           await loadQueue()
 
@@ -936,7 +936,40 @@
         }
       }
 
-      async function playPrevious() {}
+      async function playPrevious() {
+        try {
+          const prevTrackResponse = await apiFetch(ENDPOINTS.prevTrackId());
+          await loadQueue()
+
+          const track = prevTrackResponse.data
+
+          const trackMetadataResponse = await apiFetch(
+            ENDPOINTS.getTrackMetadata(track.track_id),
+          );
+
+          const trackMetadata = trackMetadataResponse.data
+
+          updatePlayer(trackMetadata);
+
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: trackMetadata.title,
+            artist: artistCredit(trackMetadata.artists),
+            album: trackMetadata.release_group.title,
+            artwork: [
+              { src: trackMetadata.release_group.cover_art_url_thumbnail_small ?? "", sizes: "512x512", type: "image/jpeg" },
+            ],
+          });
+
+          audio.src = ENDPOINTS.streamTrack(track.track_id);
+          audio.load();
+          await audio.play();
+          document.getElementById("player-art").classList.add("spinning");
+          showPlayState(true);
+        } catch (err) {
+          console.warn("Failed to play random track:", err);
+          showPlayState(false);
+        }
+      }
 
       function filterList(type) {
         const input = document.getElementById(`${type}-search`);
@@ -1140,11 +1173,11 @@
             });
             
             navigator.mediaSession.setActionHandler("pause", () => {
-              togglePlayPause()
+              pause()
             });
             
             navigator.mediaSession.setActionHandler("play", () => {
-              togglePlayPause()
+              play()
             });
 
             // Optional: disable seek buttons
@@ -1372,6 +1405,20 @@
         }
       }
 
+      function play() {
+          audio.play();
+          document.getElementById("player-art").classList.add("spinning");
+          document.getElementById("now-playing").classList.remove("paused");
+          showPlayState(true);
+      }
+
+      function pause() {
+          audio.pause();
+          document.getElementById("player-art").classList.remove("spinning");
+          document.getElementById("now-playing").classList.add("paused");
+          showPlayState(false);
+      }
+
       function seekRelative(secs) {
         audio.currentTime = Math.max(
           0,
@@ -1432,6 +1479,21 @@
 
       // CHATGPT Mar 12: add a "Next" button to the player controls
       const controls = document.querySelector(".player-controls");
+      const prevBtn = document.createElement("button");
+      prevBtn.className = "ctrl-btn";
+      prevBtn.title = "Prev";
+      prevBtn.innerHTML = `
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+  <path d="M20 4v16l-12-8zM8 4h-2v16h2z"/>
+</svg>
+  `;
+  prevBtn.onclick = () => {
+        audio.pause();
+        audio.currentTime = 0;
+        playPrevious();
+      };
+      controls.appendChild(prevBtn);
+
       const nextBtn = document.createElement("button");
       nextBtn.className = "ctrl-btn";
       nextBtn.title = "Next";

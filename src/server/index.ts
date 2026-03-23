@@ -123,6 +123,29 @@ const server = Bun.serve({
         data: { track_id: nextTrack.track_id },
       });
     },
+    "/tracks/previous": async () => {
+      // this will only return the song that is currently playing.
+      // TODO: make this actually traverse through history without affecting the actual history of played songs
+      const prevTrack = db
+        .select({ id: history.track_id })
+        .from(history)
+        .orderBy(desc(history.id))
+        .limit(1)
+        .get();
+
+      if (!prevTrack || !prevTrack.id) {
+        return Response.json(
+          { error: "INTERNAL SERVER ERROR: Queue is empty" },
+          {
+            status: 504,
+          },
+        );
+      }
+
+      return Response.json({
+        data: { track_id: prevTrack.id },
+      });
+    },
     "/tracks/search": (req) => {
       const url = new URL(req.url);
 
