@@ -1047,16 +1047,51 @@
       async function loadSongs() {
         const list = document.getElementById("songs-list");
         const sub = document.getElementById("songs-subtitle");
+
         list.innerHTML = '<div class="state-msg">Loading tracks…</div>';
+
         try {
-          const data = await apiFetch(ENDPOINTS.home());
-          await loadQueue()
-          const songs = data.data ?? (Array.isArray(data) ? data : []);
-          sub.textContent = `${songs.length} tracks`;
-          list.innerHTML = songs.length
-            ? ""
-            : '<div class="state-msg">No tracks found.</div>';
-          songs.forEach((s) => list.appendChild(songItem(s)));
+          const res = await apiFetch(ENDPOINTS.home());
+          await loadQueue();
+
+          const topTracks = res.data?.topTracks?.data ?? [];
+          const recentTracks = res.data?.recentTracks?.data ?? [];
+
+          sub.textContent = ""; // remove noisy count
+
+          list.innerHTML = "";
+
+          // helper to render a section
+          function renderSection(title, tracks) {
+            if (!tracks.length) return;
+
+            const section = document.createElement("div");
+            section.style.marginBottom = "28px";
+
+            const header = document.createElement("div");
+            header.textContent = title;
+            header.style.fontSize = "10px";
+            header.style.letterSpacing = "0.12em";
+            header.style.textTransform = "uppercase";
+            header.style.color = "var(--muted)";
+            header.style.marginBottom = "8px";
+
+            const sectionList = document.createElement("div");
+            sectionList.className = "list";
+
+            tracks.slice(0, 5).forEach((t) => {
+              sectionList.appendChild(songItem(t));
+            });
+
+            section.appendChild(header);
+            section.appendChild(sectionList);
+
+            list.appendChild(section);
+          }
+
+          renderSection("recent", recentTracks);
+          renderSection("top", topTracks);
+
         } catch (e) {
           sub.textContent = "error";
           list.innerHTML = `<div class="state-msg error">Failed to load: ${e.message}</div>`;

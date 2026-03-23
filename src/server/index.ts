@@ -28,11 +28,20 @@ const server = Bun.serve({
     },
     "/home": async () => {
       try {
-        const data = fetchTracksWithMetadata({ topTracks: true });
+        const topTracks = fetchTracksWithMetadata({ topTracks: true });
+        const recentTracks = fetchTracksWithMetadata({ recentTracks: true });
 
         return Response.json({
-          count: data.length,
-          data: data,
+          data: {
+            topTracks: {
+              count: topTracks.length,
+              data: topTracks,
+            },
+            recentTracks: {
+              count: recentTracks.length,
+              data: recentTracks,
+            },
+          },
         });
       } catch (err) {
         console.log(

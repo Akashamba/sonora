@@ -1,6 +1,7 @@
 import { desc, eq, inArray, like, or } from "drizzle-orm";
 import {
   artists,
+  history,
   play_counts,
   release_groups,
   track_artists,
@@ -13,6 +14,7 @@ export function fetchTracksWithMetadata(opts?: {
   trackIds?: string[];
   trackId?: string;
   topTracks?: boolean;
+  recentTracks?: boolean;
   query?: string;
   limit?: number;
   offset?: number;
@@ -50,6 +52,21 @@ export function fetchTracksWithMetadata(opts?: {
       inArray(
         tracks.id,
         matches.map((t) => t.id),
+      ),
+    );
+  }
+
+  if (opts?.recentTracks) {
+    const matches = db
+      .selectDistinct({ track_id: history.track_id })
+      .from(history)
+      .orderBy(history.id)
+      .limit(10)
+      .all();
+    conditions.push(
+      inArray(
+        tracks.id,
+        matches.map((t) => t.track_id!),
       ),
     );
   }
