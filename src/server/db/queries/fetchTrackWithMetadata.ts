@@ -27,23 +27,6 @@ export function fetchTracksWithMetadata(opts?: {
     conditions.push(inArray(tracks.id, opts.trackIds));
   }
 
-  if (opts?.topTracks) {
-    const topTrackIds = db
-      .select({ id: tracks.id })
-      .from(tracks)
-      .leftJoin(play_counts, eq(play_counts.track_id, tracks.id))
-      .orderBy(desc(play_counts.count))
-      .limit(30)
-      .all();
-
-    conditions.push(
-      inArray(
-        tracks.id,
-        topTrackIds.map((t) => t.id),
-      ),
-    );
-  }
-
   if (opts?.query) {
     const matches = db
       .select({ id: tracks.id })
@@ -86,10 +69,13 @@ export function fetchTracksWithMetadata(opts?: {
       releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
     })
     .from(tracks)
-    .where(conditions.length > 0 ? or(...conditions) : undefined)
+    .leftJoin(play_counts, eq(play_counts.track_id, tracks.id))
     .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
     .leftJoin(artists, eq(artists.id, track_artists.artist_id))
     .leftJoin(release_groups, eq(release_groups.id, tracks.release_group_id))
+    .where(conditions.length > 0 ? or(...conditions) : undefined)
+    .orderBy(opts?.topTracks ? desc(play_counts.count) : tracks.id)
+    .limit(opts?.topTracks ? 10 : 50)
     .all();
 
   const tracksMap = new Map<string, TrackResponse>();
