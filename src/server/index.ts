@@ -182,7 +182,7 @@ const server = Bun.serve({
       server.timeout(req, 0);
 
       const [track] = await db
-        .select({ filePath: tracks.file_path })
+        .select({ id: tracks.id, filePath: tracks.file_path })
         .from(tracks)
         .where(eq(tracks.id, req.params.id));
 
@@ -231,7 +231,7 @@ const server = Bun.serve({
       // set now playing: add to history with completed=0 (default)
       db.insert(history)
         .values({
-          track_id: req.params.id,
+          track_id: track.id,
         })
         .run();
 
