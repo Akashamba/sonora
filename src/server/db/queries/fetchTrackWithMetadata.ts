@@ -3,6 +3,7 @@ import {
   artists,
   history,
   play_stats,
+  queue,
   release_groups,
   track_artists,
   tracks,
@@ -15,6 +16,7 @@ export function fetchTracksWithMetadata(opts?: {
   trackId?: string;
   topTracks?: boolean;
   recentTracks?: boolean;
+  queueTracks?: boolean;
   query?: string;
   limit?: number;
   offset?: number;
@@ -71,6 +73,14 @@ export function fetchTracksWithMetadata(opts?: {
     );
   }
 
+  const sortBy = [];
+  if (opts?.queueTracks) {
+    sortBy.push(queue.position);
+  }
+  if (opts?.topTracks) {
+    sortBy.push(desc(play_stats.count));
+  }
+
   const rows = db
     .select({
       trackId: tracks.id,
@@ -85,14 +95,16 @@ export function fetchTracksWithMetadata(opts?: {
       releaseGroupCoverArt: release_groups.cover_art_url,
       releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
       liked: play_stats.liked,
+      queuePosition: queue.position,
     })
     .from(tracks)
+    .leftJoin(queue, eq(queue.track_id, tracks.id))
     .leftJoin(play_stats, eq(play_stats.track_id, tracks.id))
     .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
     .leftJoin(artists, eq(artists.id, track_artists.artist_id))
     .leftJoin(release_groups, eq(release_groups.id, tracks.release_group_id))
     .where(conditions.length > 0 ? or(...conditions) : undefined)
-    .orderBy(opts?.topTracks ? desc(play_stats.count) : tracks.id)
+    .orderBy(...sortBy)
     .limit(opts?.topTracks ? 10 : 50)
     .all();
 
@@ -105,6 +117,7 @@ export function fetchTracksWithMetadata(opts?: {
         title: row.trackTitle,
         length: row.trackLength,
         liked: row.liked === 1,
+        position: row.queuePosition,
         release_group: {
           id: row.releaseGroupId!,
           title: row.releaseGroupTitle!,

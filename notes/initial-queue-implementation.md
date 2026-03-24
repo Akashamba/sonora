@@ -31,3 +31,9 @@
 # Note on uuidv7
 
 UUIDv7 IDs are time-ordered (timestamp-based) and generally increase as tracks are added to the queue. We rely on this property to sort items by insertion order using ORDER BY id, rather than maintaining a separate position column. While not strictly sequential across all environments, they are sufficient for ordering within this system.
+
+UUID v7 is not enough for queue, since I also need to insert at the beginning sometimes. hence I need a separate postion column with that uses floating point keys and fractional indexing.
+
+for now, inserts can only be at the beginning or end of the queue.
+
+When I add the ability to insert in between, I will need to add a function to rebalance the indices when the gap between two items is less than 1e-9.

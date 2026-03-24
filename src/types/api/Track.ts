@@ -24,5 +24,6 @@ export type TrackResponse = Simplify<
     artists: TrackResponseArtist[];
     release_group: TrackResponseReleaseGroup;
     liked: boolean;
+    position: number | null;
   }
 >;

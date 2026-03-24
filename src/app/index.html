@@ -840,6 +840,7 @@
         searchTracks: (q, limit = 50) =>
           `/tracks/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=0`,
           toggleLikeTrack: (id) => `/tracks/${id}/like`,
+          queueAlbum: (id) => `/release-groups/${id}/queue`,
       };
       // ════════════════════════════════════════════
 
@@ -1297,14 +1298,37 @@
       async function openAlbum(album) {
         previousPage = "albums-page";
         showPage("album-detail-page");
-
         const artEl = document.getElementById("album-detail-art");
         artEl.innerHTML = album.cover_art_url
           ? `<img src="${album.cover_art_url}" alt="">`
           : "💿";
         document.getElementById("album-detail-title").textContent = album.title;
-        document.getElementById("album-detail-meta").innerHTML =
-          `${album.musicbrainz_primary_type ?? "Album"} &nbsp;·&nbsp; ${fmtDate(album.first_release_date)}`;
+        document.getElementById("album-detail-meta").innerHTML = `
+          ${album.musicbrainz_primary_type ?? "Album"} &nbsp;·&nbsp; ${fmtDate(album.first_release_date)}
+          &nbsp;&nbsp;
+          <button id="queue-album-btn" class="back-btn" style="padding: 4px 10px; font-size: 10px;">
+            queue
+          </button>
+        `;
+
+        document.getElementById("queue-album-btn").onclick = async (e) => {
+        e.stopPropagation();
+
+        const btn = e.target;
+        btn.textContent = "…";
+
+        try {
+        await fetch(ENDPOINTS.queueAlbum(album.id), { method: "POST" });
+        btn.textContent = "queued";
+        setTimeout(() => (btn.textContent = "queue"), 1000);
+
+        // optional: refresh queue silently
+        loadQueue();
+        } catch {
+        btn.textContent = "error";
+        setTimeout(() => (btn.textContent = "queue"), 1000);
+        }
+        };
 
         const list = document.getElementById("album-tracks-list");
         list.innerHTML = '<div class="state-msg">Loading tracks…</div>';

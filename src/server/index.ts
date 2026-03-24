@@ -146,6 +146,37 @@ const server = Bun.serve({
         data: { track_id: prevTrack.id },
       });
     },
+    "/release-groups/:id/queue": async (req) => {
+      try {
+        const firstTrack = db.transaction((tx) => {
+          const albumTracks = tx
+            .select({ id: tracks.id })
+            .from(tracks)
+            .where(eq(tracks.release_group_id, req.params.id))
+            .all();
+          const queueTop = tx
+            .select({ position: queue.position })
+            .from(queue)
+            .orderBy(queue.position)
+            .limit(1)
+            .get();
+
+          tx.insert(queue)
+            .values(
+              albumTracks.map((t, i) => ({
+                track_id: t.id,
+                position: queueTop?.position! - albumTracks.length + i,
+              })),
+            )
+            .run();
+          return albumTracks[0];
+        });
+
+        return Response.json({ data: { track_id: firstTrack?.id } });
+      } catch {
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
+    },
     "/tracks/search": (req) => {
       const url = new URL(req.url);
 
@@ -164,20 +195,18 @@ const server = Bun.serve({
     "/queue": async () => {
       try {
         const queueTracks = db
-          .select({ trackId: queue.track_id, position: queue.id })
+          .select({ trackId: queue.track_id })
           .from(queue)
           .all();
 
         const data = fetchTracksWithMetadata({
           trackIds: queueTracks.map((t) => t.trackId || ""),
+          queueTracks: true,
         });
 
         return Response.json({
           count: data.length,
-          data: data.map((t) => ({
-            ...t,
-            position: queueTracks.find((q) => q.trackId === t.id)?.position,
-          })),
+          data: data,
         });
       } catch (err) {
         console.log(
