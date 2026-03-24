@@ -2,7 +2,7 @@ import { desc, eq, inArray, like, or } from "drizzle-orm";
 import {
   artists,
   history,
-  play_counts,
+  play_stats,
   release_groups,
   track_artists,
   tracks,
@@ -84,14 +84,15 @@ export function fetchTracksWithMetadata(opts?: {
       releaseGroupTitle: release_groups.title,
       releaseGroupCoverArt: release_groups.cover_art_url,
       releaseGroupThumbnail: release_groups.cover_art_url_thumbnail_small,
+      liked: play_stats.liked,
     })
     .from(tracks)
-    .leftJoin(play_counts, eq(play_counts.track_id, tracks.id))
+    .leftJoin(play_stats, eq(play_stats.track_id, tracks.id))
     .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
     .leftJoin(artists, eq(artists.id, track_artists.artist_id))
     .leftJoin(release_groups, eq(release_groups.id, tracks.release_group_id))
     .where(conditions.length > 0 ? or(...conditions) : undefined)
-    .orderBy(opts?.topTracks ? desc(play_counts.count) : tracks.id)
+    .orderBy(opts?.topTracks ? desc(play_stats.count) : tracks.id)
     .limit(opts?.topTracks ? 10 : 50)
     .all();
 
@@ -103,6 +104,7 @@ export function fetchTracksWithMetadata(opts?: {
         id: row.trackId,
         title: row.trackTitle,
         length: row.trackLength,
+        liked: row.liked === 1,
         release_group: {
           id: row.releaseGroupId!,
           title: row.releaseGroupTitle!,

@@ -839,6 +839,7 @@
         queue: () => `/queue`,
         searchTracks: (q, limit = 50) =>
           `/tracks/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=0`,
+          toggleLikeTrack: (id) => `/tracks/${id}/like`,
       };
       // ════════════════════════════════════════════
 
@@ -986,6 +987,45 @@
       }
 
       function updatePlayer(track) {
+        // add a like button that toggles like status
+            const likeBtn = document.createElement("button");
+            likeBtn.className = "ctrl-btn";
+            likeBtn.id = "player-like-btn";
+            likeBtn.title = "Like";
+            if (track.liked) {
+              likeBtn.textContent = "❤️";
+            } else {
+              likeBtn.innerHTML = `
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+  </svg>
+    `;
+            }
+            likeBtn.onclick = () => {
+              fetch(ENDPOINTS.toggleLikeTrack(track.id), { method: "POST" })
+              // based on the response, update the like button
+              .then((r) => r.json())
+              .then((r) => {
+                if (r.data.liked) {
+                  likeBtn.textContent = "❤️";
+                } else {
+                  likeBtn.innerHTML = `
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+  </svg>
+    `;;
+                }
+              })
+              .catch(() => {
+                likeBtn.textContent = "❤️";
+              });
+            };
+        try {
+          document.getElementById("player-page").removeChild(document.getElementById("player-like-btn"));
+        } catch {
+          // do nothing
+        }
+        document.getElementById("player-page").appendChild(likeBtn);
         document.getElementById("player-track").textContent = track.title;
         document.getElementById("player-artist").textContent = artistCredit(
           track.artists,

@@ -85,15 +85,16 @@ export const history = sqliteTable("history_table", {
     .$defaultFn(() => new Date()),
 });
 
-export const play_counts = sqliteTable("play_counts_table", {
+export const play_stats = sqliteTable("play_stats_table", {
   // eventually this should handle counts for multiple users (for demos and just to show I can)
   id: text()
     .primaryKey()
-    .$defaultFn(() => uuidv7()),
+    .$defaultFn(() => randomUUID()),
   track_id: text()
     .references(() => tracks.id, { onDelete: "cascade" })
     .unique(),
   count: int().default(1),
+  liked: int().default(0), // 0 for not liked, 1 for liked. can be extended to handle more states (disliked, etc.) in the future if needed.
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

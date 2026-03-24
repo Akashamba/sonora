@@ -23,5 +23,6 @@ export type TrackResponse = Simplify<
   Pick<Track, "id" | "title" | "length"> & {
     artists: TrackResponseArtist[];
     release_group: TrackResponseReleaseGroup;
+    liked: boolean;
   }
 >;

@@ -3,7 +3,7 @@ import { db } from "./db";
 import {
   artists,
   history,
-  play_counts,
+  play_stats,
   queue,
   release_groups,
   track_artists,
@@ -200,6 +200,36 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    "/tracks/:id/like": async (req) => {
+      try {
+        const trackId = req.params.id;
+
+        // toggle like status
+        const currentStatus = db
+          .select({ liked: play_stats.liked })
+          .from(play_stats)
+          .where(eq(play_stats.track_id, trackId))
+          .get();
+
+        if (currentStatus) {
+          db.update(play_stats)
+            .set({ liked: currentStatus.liked ? 0 : 1 })
+            .where(eq(play_stats.track_id, trackId))
+            .run();
+        } else {
+          db.insert(play_stats).values({ track_id: trackId, liked: 1 }).run();
+        }
+
+        return Response.json({
+          data: { liked: !currentStatus?.liked },
+        });
+      } catch (err) {
+        console.log(
+          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+        );
+        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      }
+    },
     "/tracks/:id/stream": async (req) => {
       // enable long-lived streaming connectionj
       server.timeout(req, 0);
@@ -226,10 +256,10 @@ const server = Bun.serve({
             id: history.id,
             track_id: history.track_id,
             completed: history.completed,
-            count: play_counts.count,
+            count: play_stats.count,
           })
           .from(history)
-          .leftJoin(play_counts, eq(play_counts.track_id, history.track_id))
+          .leftJoin(play_stats, eq(play_stats.track_id, history.track_id))
           .orderBy(desc(history.id))
           .limit(1)
           .get();
@@ -240,11 +270,11 @@ const server = Bun.serve({
             .set({ completed: 1 })
             .where(eq(history.id, last_played?.id!))
             .run();
-          // upsert song to play_counts with count 1 (default) or increment by 1
-          tx.insert(play_counts)
+          // upsert song to play_stats with count 1 (default) or increment by 1
+          tx.insert(play_stats)
             .values({ track_id: last_played?.track_id })
             .onConflictDoUpdate({
-              target: play_counts.track_id,
+              target: play_stats.track_id,
               set: { count: last_played?.count! + 1 },
             })
             .run();
