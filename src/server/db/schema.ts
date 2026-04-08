@@ -1,6 +1,7 @@
 import { uuidv7 } from "uuidv7";
 import { randomUUID } from "crypto";
 import { int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { error } from "console";
 
 export const tracks = sqliteTable("tracks_table", {
   id: text()
@@ -96,6 +97,21 @@ export const play_stats = sqliteTable("play_stats_table", {
     .unique(),
   count: int().default(1),
   liked: int().default(0), // 0 for not liked, 1 for liked. can be extended to handle more states (disliked, etc.) in the future if needed.
+  created_at: int("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updated_at: int("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const jobs = sqliteTable("jobs", {
+  id: text()
+    .primaryKey()
+    .$defaultFn(() => uuidv7()),
+  url: text().notNull(), // restricted to only urls for now, can be extended to support other types of jobs later (or other jobs can be managed through different tables)
+  status: text().notNull().default("queued"), // (queued, running, completed, failed) add check condition to make this an enum
+  error: text(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

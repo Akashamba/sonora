@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   artists,
   history,
+  jobs,
   play_stats,
   queue,
   release_groups,
@@ -366,29 +367,12 @@ const server = Bun.serve({
 
       const urls = await getAllUrlsFromPlaylist(url);
 
-      try {
-        // urls.forEach((url) => ingestTrack(url));
-        for (const url of urls) {
-          ingestTrack(url);
-          await new Promise((r) => setTimeout(r, 5000));
-        }
-      } catch (err) {
-        return Response.json(
-          {
-            message: `error while ingesting tracks: ${(err as Error).message}`,
-          },
-          {
-            status: 500,
-            headers: {
-              "Access-Control-Allow-Origin": "*",
-            },
-          },
-        );
-      }
+      urls.forEach((url) => db.insert(jobs).values({ url }).run());
+      console.log("created jobs to ingest tracks");
 
       return Response.json(
         {
-          message: "ingested tracks",
+          message: "created jobs to ingest tracks",
         },
         {
           status: 200,

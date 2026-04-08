@@ -17,6 +17,6 @@ Mar 25. Last updated april 8, 2026
 
 ## Prod Tasks
 
-- [ ] move ingest to a separate process
+- [x] move ingest to a separate process
 - [ ] prepare my Bun server for production
 - [ ] set up hook to auto deploy + ci/cd, maybe using github actions or something similar, to make it easier to update the server when I make changes.
