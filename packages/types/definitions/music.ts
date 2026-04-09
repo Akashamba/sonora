@@ -4,7 +4,7 @@ import {
   release_groups,
   track_artists,
   tracks,
-} from "~/server/db/schema";
+} from "../../../apps/server/src/db/schema";
 
 export type Track = InferSelectModel<typeof tracks>;
 export type ReleaseGroup = InferSelectModel<typeof release_groups>;

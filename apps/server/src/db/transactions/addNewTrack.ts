@@ -1,14 +1,11 @@
 import { db } from "..";
-import {
-  insertArtist,
-  type ArtistType,
-} from "~/server/db/queries/insertArtist";
-import { insertTrack } from "~/server/db/queries/insertTrack";
+import { insertArtist, type ArtistType } from "~/db/queries/insertArtist";
+import { insertTrack } from "~/db/queries/insertTrack";
 import {
   insertTrackArtist,
   type InsertedAristType,
-} from "~/server/db/queries/insertTrackArtist";
-import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
+} from "~/db/queries/insertTrackArtist";
+import { upsertReleaseGroup } from "~/db/queries/upsertReleseGroup";
 
 export interface TrackInfoType {
   release: {

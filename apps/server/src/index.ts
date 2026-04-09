@@ -21,7 +21,7 @@ const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
   routes: {
     "/": () => {
-      const index = readFileSync("src/app/index.html", "utf8");
+      const index = readFileSync("../../apps/web-old/index.html", "utf8");
       return new Response(index, {
         headers: { "Content-Type": "text/html" },
       });
@@ -272,7 +272,8 @@ const server = Bun.serve({
         return new Response("Track not found", { status: 404 });
       }
 
-      const audioFile = file(track.filePath);
+      console.log("@root/" + track.filePath);
+      const audioFile = file("../../" + track.filePath);
       const exists = await audioFile.exists();
 
       if (!exists) return new Response("File not found", { status: 404 });

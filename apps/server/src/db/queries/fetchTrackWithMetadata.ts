@@ -9,7 +9,7 @@ import {
   tracks,
 } from "../schema";
 import { db } from "..";
-import type { TrackResponse } from "~/types/api/Track";
+import type { TrackResponse } from "@root/packages/types/api/Track";
 
 export function fetchTracksWithMetadata(opts?: {
   trackIds?: string[];

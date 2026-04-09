@@ -1,0 +1,6 @@
+{
+  "name": "sonora-types",
+  "dependencies": {
+    "drizzle-orm": "^1.0.0-beta.17-67b1795"
+  }
+}

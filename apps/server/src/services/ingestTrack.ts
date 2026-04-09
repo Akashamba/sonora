@@ -1,7 +1,7 @@
 // TODO: Group all unknown album songs under the same album, same for artists, not for unknown name
 
-import { queryMatches } from "~/server/db/queries/queryTrackMatches";
-import { addNewTrack } from "~/server/db/transactions/addNewTrack";
+import { queryMatches } from "~/db/queries/queryTrackMatches";
+import { addNewTrack } from "~/db/transactions/addNewTrack";
 import { sanitizeFileName } from "~/utils/audioPath";
 import { downloadWithRetry } from "~/utils/fetchM4a";
 import {
