@@ -7,7 +7,9 @@ export default defineConfig({
     proxy: {
       "/home": "http://localhost:3000",
       "/release-group": "http://localhost:3000",
+      "/tracks": "http://localhost:3000",
     },
   },
+  base: "/preview/",
   plugins: [react()],
 });

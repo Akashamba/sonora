@@ -16,6 +16,7 @@ import { readFileSync } from "fs";
 import { fetchTracksWithMetadata } from "./db/queries/fetchTrackWithMetadata";
 import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
 import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
+import { join } from "path";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -25,6 +26,19 @@ const server = Bun.serve({
       return new Response(index, {
         headers: { "Content-Type": "text/html" },
       });
+    },
+    "/preview/*": async (req) => {
+      const distPath = join(process.cwd(), "../server/dist");
+      const url = new URL(req.url);
+      // Strip the /preview prefix when looking up the file
+      const filePath = join(distPath, url.pathname.replace("/preview", ""));
+
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        return new Response(file);
+      }
+
+      return new Response(Bun.file(join(distPath, "index.html")));
     },
     "/home": async () => {
       try {
