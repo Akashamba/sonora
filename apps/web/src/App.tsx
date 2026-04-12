@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 // import reactLogo from "./assets/react.svg";
 // import viteLogo from "./assets/vite.svg";
 // import heroImg from "./assets/hero.png";
@@ -53,6 +53,24 @@ function SongRow({ song }: { song: any }) {
 function App() {
   const [data, setData] = useState<any>(null);
 
+  // ref + event listener to unlock autoplay
+  const audioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    const unlock = () => {
+      audioRef.current?.play().catch(() => {});
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+
+    window.addEventListener("click", unlock);
+    window.addEventListener("keydown", unlock);
+
+    return () => {
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   useEffect(() => {
     fetch("/home")
       .then((res) => res.json())
@@ -66,9 +84,7 @@ function App() {
       <section id="center">
         <div>
           <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
+          <Link to="/now-playing">Now Playing</Link>
         </div>
       </section>
 
@@ -85,6 +101,9 @@ function App() {
           ))}
         </div>
       </section>
+
+      {/* no-op audio element to unlock autoplay */}
+      <audio ref={audioRef} />
     </>
   );
 }
