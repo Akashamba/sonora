@@ -11,6 +11,7 @@
 - [x] ensure server can serve the built client app in production (vite dev server for dev does not need to be served by the server, but in production we need to serve the built client app)
 - [x] ensure csr works from client in production
 - [x] ensure client can make requests to server in production without CORS issues
-- [ ] pull on OP6 and test in production
 
-- learn to build the server app
+- [x] make audio component that can switch songs in the background with two players
+
+- [x] pull on OP6 and test in production
