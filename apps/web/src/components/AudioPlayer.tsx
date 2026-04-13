@@ -1,12 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-// import { useAudioControlsStore } from "../store/audio-store";
-// import UnlockAutoplay from "./UnlockAutoplay";
+import { usePlayerStore } from "../store/audio-store";
 
 const AudioPlayer = () => {
   const playerRef1 = useRef<HTMLAudioElement>(null);
   const playerRef2 = useRef<HTMLAudioElement>(null);
   const [nextLoaded, setNextLoaded] = useState(false);
   const activePlayer = useRef<1 | 2>(1);
+
+  const setControls = usePlayerStore((s) => s.setControls);
+  const setCurrentTrackId = usePlayerStore((s) => s.setCurrentTrackId);
+  const setPaused = usePlayerStore((s) => s.setPaused);
+  useEffect(() => {
+    setControls({
+      play: () => {
+        activePlayer.current === 1
+          ? playerRef1.current?.play()
+          : playerRef2.current?.play();
+        setPaused(false);
+      },
+      pause: () => {
+        activePlayer.current === 1
+          ? playerRef1.current?.pause()
+          : playerRef2.current?.pause();
+        setPaused(true);
+      },
+      prev: () => {
+        if (playerRef1.current && playerRef2.current) {
+          activePlayer.current === 1
+            ? (playerRef1.current.currentTime = 0)
+            : (playerRef2.current.currentTime = 0);
+        }
+      },
+      next: async () => {
+        if (playerRef1.current && playerRef2.current) {
+          if (!nextLoaded) {
+            await loadNextTrackForInactivePlayer();
+          }
+          activePlayer.current === 1
+            ? playerRef1.current.dispatchEvent(new Event("ended"))
+            : playerRef2.current.dispatchEvent(new Event("ended"));
+        }
+      },
+    });
+  }, []);
 
   // Fetch next track and assign it to active player
   const fetchNextTrackForPlayer = async (
@@ -15,6 +51,7 @@ const AudioPlayer = () => {
     if (playerRef1.current && playerRef2.current) {
       const res = await fetch("/tracks/next");
       const nextTrack = await res.json();
+      setCurrentTrackId(nextTrack.data.track_id);
       ref.current.src = `/tracks/${nextTrack.data.track_id}/stream`;
       ref.current.load();
     }
@@ -57,9 +94,13 @@ const AudioPlayer = () => {
   const handleEnded = (e: React.SyntheticEvent<HTMLAudioElement>) => {
     if (e.target === playerRef1.current) {
       activePlayer.current = 2;
+      playerRef1.current?.pause();
+      playerRef1.current.currentTime = 0;
       playerRef2.current?.play();
     } else {
       activePlayer.current = 1;
+      playerRef2.current?.pause();
+      playerRef2.current!.currentTime = 0;
       playerRef1.current?.play();
     }
     setNextLoaded(false);

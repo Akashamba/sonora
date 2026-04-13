@@ -1,9 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { usePlayerStore } from "../store/audio-store";
 
 const NowPlaying = () => {
   const [metadata, setMetadata] = useState<any>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [showQueue, setSetShowQueue] = useState(false);
+  const { play, pause, next, prev, paused } = usePlayerStore();
+  const currentTrackId = usePlayerStore((s) => s.currentTrackId);
+
+  useEffect(() => {
+    fetch(`/tracks/${currentTrackId}/metadata`)
+      .then((res) => res.json())
+      .then((json) => {
+        setMetadata(json.data);
+      });
+  }, [currentTrackId]);
 
   if (!fullscreen) {
     return (
@@ -32,7 +43,7 @@ const NowPlaying = () => {
 
   return (
     <div className="h-screen w-screen z-40">
-      {/* {metadata && (
+      {metadata && (
         <div>
           <div className="track-cover">
             <img src={metadata.release_group.cover_art_url_thumbnail_small} />
@@ -42,8 +53,27 @@ const NowPlaying = () => {
             <div className="track-artist">{metadata.artists[0].name}</div>
           </div>
         </div>
-      )} */}
+      )}
       {showQueue && <Queue />}
+
+      <button
+        className="bg-gray-800 text-white px-4 py-2 rounded-md"
+        onClick={prev}
+      >
+        Prev
+      </button>
+      <button
+        className="bg-gray-800 text-white px-4 py-2 rounded-md"
+        onClick={paused ? play : pause}
+      >
+        {paused ? "Play" : "Pause"}
+      </button>
+      <button
+        className="bg-gray-800 text-white px-4 py-2 rounded-md"
+        onClick={next}
+      >
+        Next
+      </button>
 
       <br />
 
