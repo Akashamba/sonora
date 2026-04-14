@@ -11,3 +11,6 @@ tracks.sqlite
 
 # private notes
 /notes/private/
+
+# server-only
+package-lock.json
