@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { usePlayerStore } from "../store/audio-store";
+import { artistCredit } from "../utils/artistCredit";
 
 const NowPlaying = () => {
   const [metadata, setMetadata] = useState<any>(null);
@@ -7,6 +8,39 @@ const NowPlaying = () => {
   const [showQueue, setSetShowQueue] = useState(false);
   const { play, pause, next, prev, paused } = usePlayerStore();
   const currentTrackId = usePlayerStore((s) => s.currentTrackId);
+  const playRef = useRef(play);
+  const pauseRef = useRef(pause);
+  const nextRef = useRef(next);
+  const prevRef = useRef(prev);
+
+  useEffect(() => {
+    playRef.current = play;
+    pauseRef.current = pause;
+    nextRef.current = next;
+    prevRef.current = prev;
+  }, [play, pause, next, prev]);
+
+  // attach play and pause to navigator api after first interaction
+  useEffect(() => {
+    const addControls = () => {
+      if ("mediaSession" in navigator) {
+        console.log("play activated");
+        navigator.mediaSession.setActionHandler("play", playRef.current);
+        navigator.mediaSession.setActionHandler("pause", pauseRef.current);
+        navigator.mediaSession.setActionHandler("nexttrack", nextRef.current);
+        navigator.mediaSession.setActionHandler(
+          "previoustrack",
+          prevRef.current,
+        );
+
+        window.removeEventListener("keydown", addControls);
+        window.removeEventListener("click", addControls);
+      }
+    };
+
+    window.addEventListener("keydown", addControls);
+    window.addEventListener("click", addControls);
+  }, []);
 
   useEffect(() => {
     fetch(`/tracks/${currentTrackId}/metadata`)
@@ -15,6 +49,23 @@ const NowPlaying = () => {
         setMetadata(json.data);
       });
   }, [currentTrackId]);
+
+  useEffect(() => {
+    if (metadata) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: metadata.title,
+        artist: artistCredit(metadata.artists),
+        album: metadata.release_group.title,
+        artwork: [
+          {
+            src: metadata.release_group.cover_art_url_thumbnail_small ?? "",
+            sizes: "512x512",
+            type: "image/jpeg",
+          },
+        ],
+      });
+    }
+  }, [metadata]);
 
   if (!fullscreen) {
     return (
