@@ -35,9 +35,5 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/song/:id" element={<Song />} />
       </Routes>
     </BrowserRouter>
-    <audio
-      src="https://dl.espressif.com/dl/audio/ff-16b-2c-44100hz.mp3"
-      controls
-    />
   </StrictMode>,
 );
