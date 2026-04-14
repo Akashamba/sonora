@@ -97,11 +97,13 @@ const AudioPlayer = () => {
       playerRef1.current?.pause();
       playerRef1.current.currentTime = 0;
       playerRef2.current?.play();
+      setPaused(false);
     } else {
       activePlayer.current = 1;
       playerRef2.current?.pause();
       playerRef2.current!.currentTime = 0;
       playerRef1.current?.play();
+      setPaused(false);
     }
     setNextLoaded(false);
   };

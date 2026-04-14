@@ -18,11 +18,35 @@ const NowPlaying = () => {
 
   if (!fullscreen) {
     return (
-      <div
-        className="flex justify-center fixed bottom-10 left-0 w-full bg-[#ba9b46] text-white py-3"
-        onClick={() => setFullscreen((prev) => !prev)}
-      >
-        miniplayer
+      <div className="flex justify-between fixed bottom-10 left-0 w-full bg-[#ba9b46] text-white py-3">
+        {metadata ? (
+          <div onClick={() => setFullscreen((prev) => !prev)}>
+            {metadata.title}
+          </div>
+        ) : (
+          <div>Loading...</div>
+        )}
+
+        <div className="z-50">
+          <button
+            className="bg-gray-800 text-white px-4 rounded-md"
+            onClick={prev}
+          >
+            Prev
+          </button>
+          <button
+            className="bg-gray-800 text-white px-4 rounded-md"
+            onClick={paused ? play : pause}
+          >
+            {paused ? "Play" : "Pause"}
+          </button>
+          <button
+            className="bg-gray-800 text-white px-4 rounded-md"
+            onClick={next}
+          >
+            Next
+          </button>
+        </div>
       </div>
     );
   }
