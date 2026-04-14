@@ -4,7 +4,7 @@ import { usePlayerStore } from "../store/audio-store";
 const AudioPlayer = () => {
   const playerRef1 = useRef<HTMLAudioElement>(null);
   const playerRef2 = useRef<HTMLAudioElement>(null);
-  const [nextLoaded, setNextLoaded] = useState(false);
+  const nextLoaded = useRef(false);
   const activePlayer = useRef<1 | 2>(1);
 
   const setControls = usePlayerStore((s) => s.setControls);
@@ -33,7 +33,7 @@ const AudioPlayer = () => {
       },
       next: async () => {
         if (playerRef1.current && playerRef2.current) {
-          if (!nextLoaded) {
+          if (!nextLoaded.current) {
             await loadNextTrackForInactivePlayer();
           }
           activePlayer.current === 1
@@ -78,14 +78,14 @@ const AudioPlayer = () => {
     await fetchNextTrackForPlayer(
       inactivePlayerRef as React.RefObject<HTMLAudioElement>,
     );
-    setNextLoaded(true);
+    nextLoaded.current = true;
   };
 
   // when less than 30 seconds left on current player, fetch and load next player
   const handleTimeUpdate = async (
     e: React.SyntheticEvent<HTMLAudioElement>,
   ) => {
-    if (nextLoaded) return;
+    if (nextLoaded.current) return;
     if (e.currentTarget.duration - e?.currentTarget.currentTime < 30) {
       await loadNextTrackForInactivePlayer();
     }
@@ -105,7 +105,7 @@ const AudioPlayer = () => {
       playerRef1.current?.play();
       setPaused(false);
     }
-    setNextLoaded(false);
+    nextLoaded.current = false;
   };
 
   return (

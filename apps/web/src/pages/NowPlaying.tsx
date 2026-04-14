@@ -24,7 +24,6 @@ const NowPlaying = () => {
   useEffect(() => {
     const addControls = () => {
       if ("mediaSession" in navigator) {
-        console.log("play activated");
         navigator.mediaSession.setActionHandler("play", playRef.current);
         navigator.mediaSession.setActionHandler("pause", pauseRef.current);
         navigator.mediaSession.setActionHandler("nexttrack", nextRef.current);
