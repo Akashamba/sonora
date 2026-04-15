@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { usePlayerStore } from "../store/audio-store";
 
 const AudioPlayer = () => {
@@ -61,13 +61,14 @@ const AudioPlayer = () => {
   // fetch next track and load it on active player (on mount this will be player 1)
   useEffect(() => {
     const loadFirstTrack = async () => {
-      // return early if refs haven't been assigned yet
       await fetchNextTrackForPlayer(
         playerRef1 as React.RefObject<HTMLAudioElement>,
       );
     };
 
+    // return early if refs haven't been assigned yet
     if (!playerRef1.current || !playerRef2.current) return;
+
     loadFirstTrack();
   }, []);
 
@@ -92,14 +93,17 @@ const AudioPlayer = () => {
   };
 
   const handleEnded = (e: React.SyntheticEvent<HTMLAudioElement>) => {
+    // Temp fix issues that came up when playing next track on pwa. real solution is to move to Web Audio API with a single AudioContext and load decoded audio into AudioBufferSourceNodes and schedule them back-to-back using context.currentTime
     if (e.target === playerRef1.current) {
       activePlayer.current = 2;
+      playerRef2.current?.play();
       playerRef1.current?.pause();
       playerRef1.current.currentTime = 0;
       playerRef2.current?.play();
       setPaused(false);
     } else {
       activePlayer.current = 1;
+      playerRef1.current?.play();
       playerRef2.current?.pause();
       playerRef2.current!.currentTime = 0;
       playerRef1.current?.play();
@@ -110,7 +114,6 @@ const AudioPlayer = () => {
 
   return (
     <>
-      {/* <UnlockAutoplay /> */}
       <audio
         ref={playerRef1}
         controls
