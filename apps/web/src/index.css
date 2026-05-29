@@ -1,1 +1,101 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Sonora Design System Colors */
+  --background: #090B10;
+  --background-elevated: #12151D;
+  --background-floating: #1A1F2B;
+  
+  --foreground: #F3F5F7;
+  --foreground-secondary: #B6BECC;
+  --foreground-muted: #7B8496;
+  
+  --border: rgba(255, 255, 255, 0.08);
+  --border-interactive: rgba(255, 255, 255, 0.14);
+  
+  --accent: #8B5CF6;
+  --accent-glow: rgba(139, 92, 246, 0.3);
+  
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --error: #FB7185;
+  
+  --radius: 16px;
+  --radius-button: 14px;
+  --radius-floating: 20px;
+}
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--background);
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-interactive);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground-muted);
+}
+
+/* Slider styles */
+.slider-track {
+  background: var(--border-interactive);
+  height: 4px;
+  border-radius: 2px;
+}
+
+.slider-range {
+  background: var(--accent);
+  height: 100%;
+  border-radius: 2px;
+}
+
+.slider-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--foreground);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}

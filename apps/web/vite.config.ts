@@ -1,16 +1,15 @@
+// https://vite.dev/config/
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 
-// https://vite.dev/config/
 export default defineConfig({
-  server: {
-    proxy: {
-      "/home": "http://localhost:3000",
-      "/release-group": "http://localhost:3000",
-      "/tracks": "http://localhost:3000",
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
     },
   },
   base: "/preview/",
-  plugins: [react(), tailwindcss()],
 });
