@@ -286,7 +286,7 @@ const server = Bun.serve({
         return new Response("Track not found", { status: 404 });
       }
 
-      const audioFile = file("../../" + track.filePath);
+      const audioFile = file(track.filePath);
       const exists = await audioFile.exists();
 
       if (!exists) return new Response("File not found", { status: 404 });

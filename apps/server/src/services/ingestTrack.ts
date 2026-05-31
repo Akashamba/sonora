@@ -46,7 +46,7 @@ export async function ingestTrack(url: string) {
       await extractRecordingAndRelease(musicbrainzmetadata);
 
     // If not, download track
-    const filePath = `audio/${sanitizeFileName(recording.title)}.m4a`;
+    const filePath = `${process.env.AUDIO_PATH}/${sanitizeFileName(recording.title)}.m4a`;
     try {
       await downloadWithRetry(youtubeUrl, filePath);
       console.log(`[ingest] [${youtubeId}] download complete`);
