@@ -1,4 +1,4 @@
-import type { Transaction } from "~/types/definitions/database";
+import type { Transaction } from "../../../../../packages/types/definitions/database.ts";
 import { tracks } from "../schema";
 import type { ArtistType } from "./insertArtist";
 
