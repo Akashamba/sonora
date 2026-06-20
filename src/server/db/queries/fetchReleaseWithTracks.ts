@@ -35,13 +35,39 @@ export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
     tracks: [] as any[],
   };
 
-  rows.forEach((t) => {
-    releaseGroup.tracks.push({
-      id: t.trackId,
-      title: t.trackTitle,
-      length: t.trackLength,
-    });
+  // Use a Map to deduplicate tracks, keying by track ID
+  const trackMap = new Map<string, any>();
+
+  rows.forEach((row) => {
+    if (!row.trackId) return;
+
+    if (!trackMap.has(row.trackId)) {
+      trackMap.set(row.trackId, {
+        id: row.trackId,
+        title: row.trackTitle,
+        length: row.trackLength,
+        artists: [],
+      });
+    }
+
+    // Append each artist to the track's artists array
+    if (row.artistId) {
+      trackMap.get(row.trackId).artists.push({
+        id: row.artistId,
+        name: row.artistName,
+        position: row.artistPosition,
+        joinphrase: row.artistJoinphrase,
+      });
+    }
   });
+
+  // Sort artists by position so they appear in the right order
+  releaseGroup.tracks = Array.from(trackMap.values()).map((track) => ({
+    ...track,
+    artists: track.artists.sort(
+      (a: any, b: any) => (a.position ?? 0) - (b.position ?? 0),
+    ),
+  }));
 
   return releaseGroup;
 }
