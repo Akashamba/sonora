@@ -25,7 +25,17 @@ const server = Bun.serve({
     // return the HTML client app
     "/": () => {
       const index = readFileSync("src/app/index.html", "utf8");
-      return new Response(index, {
+
+      const withEnv = index.replace(
+        "</head>",
+        `<script>
+        window.__ENV__ = {
+          SHOW_MODAL: ${Bun.env.DEMO_MODE === "true"}
+        };
+      </script></head>`,
+      );
+
+      return new Response(withEnv, {
         headers: { "Content-Type": "text/html" },
       });
     },

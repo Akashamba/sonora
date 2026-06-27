@@ -518,6 +518,77 @@
     </style>
   </head>
   <body>
+    <!-- ABOUT MODAL -->
+<div id="about-overlay" style="
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(4px);
+  display: none;
+  padding: 40px 16px; overflow-y: auto;
+">
+  <div style="
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 36px 40px 32px;
+    max-width: 560px; width: 100%; position: relative;
+    font-family: var(--mono); font-size: 13px; color: var(--text);
+  ">
+    <!-- close X top-right -->
+    <button onclick="closeAbout()" style="
+      position: absolute; top: 16px; right: 16px;
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; transition: color 0.15s, border-color 0.15s;
+    " onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--muted)'"
+       onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">✕</button>
+
+    <div style="font-family:var(--serif);font-style:italic;font-size:36px;color:var(--accent);margin:0 0 4px;letter-spacing:-0.5px">Sonora Demo</div>
+    <div style="color:var(--muted);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:20px">Akash's personal music streaming server</div>
+
+    <div style="display:flex;gap:16px;margin-bottom:24px">
+      <a href="https://github.com/akashamba/sonora" target="_blank" style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(200,240,96,0.3);padding-bottom:1px">↗ GitHub</a>
+      <a href="https://akashamba.me" target="_blank" style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(200,240,96,0.3);padding-bottom:1px">↗ Portfolio</a>
+    </div>
+
+    <div style="color:#999;font-size:12px;line-height:1.9">
+      This is a demo of my personal music streaming server. The full project is on
+      <a href="https://github.com/akashamba/sonora" target="_blank" style="color:var(--accent);text-decoration:none">GitHub</a>
+      and is fully self-hostable — instructions are in the readme.<br><br>
+      Stack: <span style="color:var(--text)">Bun · SQLite · Drizzle</span><br><br>
+      Due to privacy and copyright reasons, this demo is <span style="color:var(--text);font-weight:500">read-only</span> —
+      features like importing from YouTube URLs and modifying the queue have been disabled.
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
+
+    <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Music attribution</div>
+    <div style="font-size:11px;color:#666;line-height:1.7;margin-bottom:14px">All music in this demo is copyright-free. Full attributions below.</div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+
+      <!-- ── ATTRIBUTION ENTRIES — paste new ones here, copy this block ── -->
+      <div style="background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px">
+        <div style="font-size:13px;color:var(--text);margin-bottom:4px">Album Title — <span style="color:var(--accent)">Artist Name</span></div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.8">
+          License: CC BY 4.0 · <a href="SOURCE_URL" target="_blank" style="color:#888;text-decoration:underline">Source ↗</a><br>
+          Tracks used: Track 1, Track 3, Track 7
+        </div>
+      </div>
+      <!-- ── END ATTRIBUTION ENTRY ── -->
+
+    </div>
+
+    <button onclick="closeAbout()" style="
+      margin-top:24px; width:100%;
+      background:var(--accent); border:none; color:#0d0d0d;
+      font-family:var(--mono); font-size:12px; letter-spacing:0.08em;
+      text-transform:uppercase; padding:10px; cursor:pointer; border-radius:6px;
+      transition:opacity 0.15s;
+    " onmouseover="this.style.background='#d8ff70'" onmouseout="this.style.background='var(--accent)'">
+      Enter →
+    </button>
+  </div>
+</div>
     <nav>
       <div class="logo">music.</div>
         <button class="nav-btn active" onclick="showTab('songs')">Songs</button>
@@ -849,6 +920,23 @@
       let previousPage = null;
       const audio = document.getElementById("audio-player");
       let progressInterval = null;
+
+      // ── About modal ──
+    function openAbout() {
+  const el = document.getElementById('about-overlay');
+  el.style.display = 'flex';
+  el.style.alignItems = 'flex-start';
+  el.style.justifyContent = 'center';
+}
+      function closeAbout() {
+        document.getElementById('about-overlay').style.display = 'none';
+      }
+      
+      // show modal on load if demo mode is enabled
+      if (window.__ENV__?.SHOW_MODAL) {
+        console.log('showing modal');
+        openAbout();
+      }
 
       // ── Song search debounce ──
       let _songsSearchTimer = null;
