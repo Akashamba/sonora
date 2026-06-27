@@ -885,6 +885,15 @@
       }
 
       // ── Helpers ──
+      async function apiRequest(url, init) {
+      const res = await fetch(url, init);
+
+      if (!res.ok) {
+        throw new Error(`${res.status}`);
+      }
+
+      return res;
+    }
       function fmt(ms) {
         if (!ms) return "?:??";
         const s = Math.floor(ms / 1000);
@@ -1003,7 +1012,7 @@
     `;
             }
             likeBtn.onclick = () => {
-              fetch(ENDPOINTS.toggleLikeTrack(track.id), { method: "POST" })
+              apiRequest(ENDPOINTS.toggleLikeTrack(track.id), { method: "POST" })
               // based on the response, update the like button
               .then((r) => r.json())
               .then((r) => {
@@ -1017,8 +1026,12 @@
     `;;
                 }
               })
-              .catch(() => {
-                likeBtn.textContent = "❤️";
+              .catch((e) => {
+                if (e.message === "403") {
+                  alert("Likes are disabled in demo mode.");
+                } else {
+                  likeBtn.textContent = "❤️";
+                }
               });
             };
         try {
@@ -1318,14 +1331,21 @@
         btn.textContent = "…";
 
         try {
-        await fetch(ENDPOINTS.queueAlbum(album.id), { method: "POST" });
+        await apiRequest(ENDPOINTS.queueAlbum(album.id), { method: "POST" });
         btn.textContent = "queued";
         setTimeout(() => (btn.textContent = "queue"), 1000);
 
         // optional: refresh queue silently
         loadQueue();
-        } catch {
-        btn.textContent = "error";
+        } catch (e) {
+        if (e.message === "403") {
+          btn.textContent = "demo";
+          alert("Queueing is disabled in demo mode.");
+          setTimeout(() => (btn.textContent = "queue"), 1000);
+        } else {
+          btn.textContent = "error";
+          setTimeout(() => (btn.textContent = "queue"), 1000);
+        }
         setTimeout(() => (btn.textContent = "queue"), 1000);
         }
         };
@@ -1521,7 +1541,7 @@
         status.style.color = "var(--muted)";
         status.textContent = "Submitting…";
         try {
-          const r = await fetch(ENDPOINTS.importUrl(), {
+          const r = await apiRequest(ENDPOINTS.importUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url }),
@@ -1537,7 +1557,12 @@
           }, 800);
         } catch (e) {
           status.style.color = "var(--accent2)";
-          status.textContent = `Error: ${e.message}`;
+          if (e.message === "403") {
+            status.textContent = "Importing is disabled in demo mode.";
+            alert("Importing is disabled in demo mode.");
+          } else {
+            status.textContent = `Error: ${e.message}`;
+          }
         }
       }
 
