@@ -409,7 +409,7 @@ const server = Bun.serve({
     }),
   },
   hostname: Bun.env.BIND_HOST ?? "127.0.0.1",
-  port: Bun.env.BIND_PORT ?? 3000,
+  port: Bun.env.BIND_PORT ?? 8080,
   // (optional) fallback for unmatched routes:
   // Required if Bun's version < 1.2.3
   fetch(req) {
