@@ -12,12 +12,12 @@ import {
 } from "./db/schema";
 import { file } from "bun";
 import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
-import { ingestTrack } from "~/services/ingestTrack";
 import { readFileSync } from "fs";
 import { fetchTracksWithMetadata } from "./db/queries/fetchTrackWithMetadata";
 import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
 import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
 import { blockInDemo } from "./middleware/demo-blocker";
+import { readdir } from "node:fs/promises";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -38,6 +38,21 @@ const server = Bun.serve({
       return new Response(withEnv, {
         headers: { "Content-Type": "text/html" },
       });
+    },
+    "/public/*": async (req) => {
+      const files = await readdir("./public");
+      console.log(files);
+
+      const path = new URL(req.url).pathname.replace("/public/", "");
+      const file = Bun.file(`./public/${path}`);
+      console.log(file);
+
+      if (!(await file.exists())) {
+        console.log(file);
+        return new Response("Not found", { status: 404 });
+      }
+
+      return new Response(file);
     },
     // return the content for the home page
     "/home": async () => {
