@@ -41,14 +41,11 @@ const server = Bun.serve({
     },
     "/public/*": async (req) => {
       const files = await readdir("./public");
-      console.log(files);
 
       const path = new URL(req.url).pathname.replace("/public/", "");
       const file = Bun.file(`./public/${path}`);
-      console.log(file);
 
       if (!(await file.exists())) {
-        console.log(file);
         return new Response("Not found", { status: 404 });
       }
 
