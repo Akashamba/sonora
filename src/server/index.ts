@@ -324,51 +324,119 @@ const server = Bun.serve({
 
       if (!exists) return new Response("File not found", { status: 404 });
 
-      // Set last played song as completed and update play counts
-      db.transaction((tx) => {
-        // get last played
-        const last_played = tx
-          .select({
-            id: history.id,
-            track_id: history.track_id,
-            completed: history.completed,
-            count: play_stats.count,
-          })
-          .from(history)
-          .leftJoin(play_stats, eq(play_stats.track_id, history.track_id))
-          .orderBy(desc(history.id))
-          .limit(1)
-          .get();
+      const total = audioFile.size;
+      const rangeHeader = req.headers.get("range");
 
-        if (last_played?.completed === 0) {
-          // update history with completed 1
-          tx.update(history)
-            .set({ completed: 1 })
-            .where(eq(history.id, last_played?.id!))
-            .run();
-          // upsert song to play_stats with count 1 (default) or increment by 1
-          tx.insert(play_stats)
-            .values({ track_id: last_played?.track_id })
-            .onConflictDoUpdate({
-              target: play_stats.track_id,
-              set: { count: last_played?.count! + 1 },
-            })
-            .run();
+      // Only record playback history on the initial, non-range (or start-at-zero) request.
+      // A single play generates many range requests (Safari's bytes=0-1 probe, seeks, etc.),
+      // so we'd otherwise insert many history rows per actual play.
+      let start = 0;
+      let end = total - 1;
+      let isPartial = false;
+
+      if (rangeHeader) {
+        // Parse a single range: bytes=START-END | bytes=START- | bytes=-SUFFIX
+        const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+
+        if (!match) {
+          return new Response("Invalid range", {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
         }
-      });
 
-      // set now playing: add to history with completed=0 (default)
-      db.insert(history)
-        .values({
-          track_id: track.id,
-        })
-        .run();
+        const [, startStr, endStr] = match;
 
-      return new Response(audioFile, {
-        headers: {
-          "Content-Type": "audio/mp4",
-          "Content-Length": String(audioFile.size),
-        },
+        if (startStr === "" && endStr === "") {
+          return new Response("Invalid range", {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
+        }
+
+        if (startStr === "") {
+          // suffix range: last N bytes
+          const suffix = Number(endStr);
+          start = Math.max(0, total - suffix);
+          end = total - 1;
+        } else {
+          start = Number(startStr);
+          end = endStr === "" ? total - 1 : Math.min(Number(endStr), total - 1);
+        }
+
+        // start beyond EOF, or inverted range
+        if (start >= total || start > end) {
+          return new Response("Range not satisfiable", {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
+        }
+
+        isPartial = true;
+      }
+
+      // Record history only on the initial request: no Range header, or a range
+      // that begins at byte 0 (the first chunk of a fresh playback).
+      const shouldRecordHistory = !rangeHeader || start === 0;
+
+      if (shouldRecordHistory) {
+        // Set last played song as completed and update play counts
+        db.transaction((tx) => {
+          // get last played
+          const last_played = tx
+            .select({
+              id: history.id,
+              track_id: history.track_id,
+              completed: history.completed,
+              count: play_stats.count,
+            })
+            .from(history)
+            .leftJoin(play_stats, eq(play_stats.track_id, history.track_id))
+            .orderBy(desc(history.id))
+            .limit(1)
+            .get();
+
+          if (last_played?.completed === 0) {
+            // update history with completed 1
+            tx.update(history)
+              .set({ completed: 1 })
+              .where(eq(history.id, last_played?.id!))
+              .run();
+            // upsert song to play_stats with count 1 (default) or increment by 1
+            tx.insert(play_stats)
+              .values({ track_id: last_played?.track_id })
+              .onConflictDoUpdate({
+                target: play_stats.track_id,
+                set: { count: last_played?.count! + 1 },
+              })
+              .run();
+          }
+        });
+
+        // set now playing: add to history with completed=0 (default)
+        db.insert(history)
+          .values({
+            track_id: track.id,
+          })
+          .run();
+      }
+
+      // Build the response body. .slice() returns a lazy view — no full read into memory.
+      const body = isPartial ? audioFile.slice(start, end + 1) : audioFile;
+
+      const headers: Record<string, string> = {
+        "Content-Type": "audio/mp4",
+        "Accept-Ranges": "bytes",
+        "Content-Length": String(end - start + 1),
+      };
+
+      if (isPartial) {
+        headers["Content-Range"] = `bytes ${start}-${end}/${total}`;
+      }
+
+      return new Response(body, {
+        status: isPartial ? 206 : 200,
+        headers,
       });
     },
     // handle importing a track from a URL
