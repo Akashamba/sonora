@@ -12,21 +12,46 @@ import {
 } from "./db/schema";
 import { file } from "bun";
 import { getAllUrlsFromPlaylist } from "~/utils/metadata-utils";
-import { ingestTrack } from "~/services/ingestTrack";
 import { readFileSync } from "fs";
 import { fetchTracksWithMetadata } from "./db/queries/fetchTrackWithMetadata";
 import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
 import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
+import { blockInDemo } from "./middleware/demo-blocker";
+import { readdir } from "node:fs/promises";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
   routes: {
+    // return the HTML client app
     "/": () => {
       const index = readFileSync("src/app/index.html", "utf8");
-      return new Response(index, {
+
+      const withEnv = index.replace(
+        "</head>",
+        `<script>
+        window.__ENV__ = {
+          SHOW_MODAL: ${Bun.env.DEMO_MODE === "true"}
+        };
+      </script></head>`,
+      );
+
+      return new Response(withEnv, {
         headers: { "Content-Type": "text/html" },
       });
     },
+    "/public/*": async (req) => {
+      const files = await readdir("./public");
+
+      const path = new URL(req.url).pathname.replace("/public/", "");
+      const file = Bun.file(`./public/${path}`);
+
+      if (!(await file.exists())) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      return new Response(file);
+    },
+    // return the content for the home page
     "/home": async () => {
       try {
         const topTracks = fetchTracksWithMetadata({ topTracks: true });
@@ -51,6 +76,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // return the content for the artists page (all artists in db)
     "/artists": async () => {
       try {
         const allArtists = db.select().from(artists).all();
@@ -62,6 +88,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // return the content for the albums page (all release groups in db)
     "/release-groups": async () => {
       try {
         const allReleaseGroups = db.select().from(release_groups).all();
@@ -76,6 +103,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // return the content for per album page (tracks in release group)
     "/release-groups/:id/tracks": async (req) => {
       try {
         const data = fetchReleaseWithTracks(req.params.id);
@@ -84,6 +112,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // return the content for per artist page (tracks in artist)
     "/artists/:id/tracks": async (req) => {
       try {
         const artistTrackIds = db
@@ -108,6 +137,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // skip to next track in queue, and refill queue if necessary
     "/tracks/next": async () => {
       const nextTrack = fetchNextTrackWithRefill();
 
@@ -124,6 +154,7 @@ const server = Bun.serve({
         data: { track_id: nextTrack.track_id },
       });
     },
+    // skip to previous track in queue, and refill queue if necessary (currently only restarts the current track)
     "/tracks/previous": async () => {
       // this will only return the song that is currently playing.
       // TODO: make this actually traverse through history without affecting the actual history of played songs
@@ -147,13 +178,20 @@ const server = Bun.serve({
         data: { track_id: prevTrack.id },
       });
     },
-    "/release-groups/:id/queue": async (req) => {
+    // add a release group to the queue
+    "/release-groups/:id/queue": blockInDemo(async (req) => {
+      const releaseGroupId = req.params.id;
+
+      if (!releaseGroupId) {
+        return new Response("Missing release group id", { status: 400 });
+      }
+
       try {
         const firstTrack = db.transaction((tx) => {
           const albumTracks = tx
             .select({ id: tracks.id })
             .from(tracks)
-            .where(eq(tracks.release_group_id, req.params.id))
+            .where(eq(tracks.release_group_id, releaseGroupId))
             .all();
           const queueTop = tx
             .select({ position: queue.position })
@@ -177,7 +215,8 @@ const server = Bun.serve({
       } catch {
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
-    },
+    }),
+    // search for tracks by track title, artist, or release group name
     "/tracks/search": (req) => {
       const url = new URL(req.url);
 
@@ -193,6 +232,7 @@ const server = Bun.serve({
         offset: Number(url.searchParams.get("offset") ?? 0),
       });
     },
+    // return the content for the queue page (all tracks in queue)
     "/queue": async () => {
       try {
         const queueTracks = db
@@ -216,6 +256,7 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
+    // return the metadata for a track
     "/tracks/:id/metadata": async (req) => {
       try {
         const [data] = fetchTracksWithMetadata({ trackId: req.params.id });
@@ -230,9 +271,13 @@ const server = Bun.serve({
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     },
-    "/tracks/:id/like": async (req) => {
+    // toggle like status for a track
+    "/tracks/:id/like": blockInDemo(async (req) => {
       try {
         const trackId = req.params.id;
+        if (!trackId) {
+          return new Response("Missing Track id", { status: 400 });
+        }
 
         // toggle like status
         const currentStatus = db
@@ -259,9 +304,10 @@ const server = Bun.serve({
         );
         return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
-    },
+    }),
+    // stream a track
     "/tracks/:id/stream": async (req) => {
-      // enable long-lived streaming connectionj
+      // enable long-lived streaming connections
       server.timeout(req, 0);
 
       const [track] = await db
@@ -393,7 +439,8 @@ const server = Bun.serve({
         headers,
       });
     },
-    "/import": async (req) => {
+    // handle importing a track from a URL
+    "/import": blockInDemo(async (req) => {
       // Handle CORS preflight
       if (req.method === "OPTIONS") {
         return new Response(null, {
@@ -449,9 +496,10 @@ const server = Bun.serve({
           },
         },
       );
-    },
+    }),
   },
-  hostname: "0.0.0.0",
+  hostname: Bun.env.BIND_HOST ?? "127.0.0.1",
+  port: Bun.env.BIND_PORT ?? 8080,
   // (optional) fallback for unmatched routes:
   // Required if Bun's version < 1.2.3
   fetch(req) {
