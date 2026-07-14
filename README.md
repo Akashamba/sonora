@@ -1,9 +1,10 @@
-**Sonora: Self-hosted music streaming app with a media ingestion pipeline**
+# Sonora: Self-hosted music streaming app with a media ingestion pipeline
+
 ![Screenshot](sonora.jpg)
 
 Sonora is a self-hosted music server built on Bun. Paste in a link and a background ingestion worker fetches audio, reconciles metadata against multiple sources including MusicBrainz, and slots the track into your library, all without blocking the main server. Streaming supports range requests, so scrubbing through a track is instant rather than a full re-download. 
 
-It's a solo project built to scratch a personal itch, currently running on hardware you probably wouldn't guess.
+It's a solo project built to scratch a personal itch, currently running on my old OnePlus 6 that I've repurposed into a server.
 
 ```markdown
 [ link ] → ingestTrack (background worker)
