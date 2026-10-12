@@ -1,8 +1,10 @@
 import { $ } from "bun";
+import { logIngestWarning } from "~/utils/ingestLogger";
 
 export async function downloadWithRetry(
   youtubeUrl: string,
   filePath: string,
+  context: { jobId: string; youtubeId: string },
   retries = 3,
 ) {
   for (let i = 0; i < retries; i++) {
@@ -18,12 +20,16 @@ export async function downloadWithRetry(
         --postprocessor-args "ffmpeg:-movflags +faststart" \
         -o ${filePath} \
         ${youtubeUrl}`;
-      console.log("Download complete");
-      return;
+      return i + 1;
     } catch (e) {
+      await logIngestWarning("audio_download_attempt_failed", e, {
+        ...context,
+        stage: "audio_download",
+        attempt: i + 1,
+        maxAttempts: retries,
+        filePath,
+      });
       if (i === retries - 1) throw e;
-      console.log("Error while downloading:", (e as Error).message);
-      console.log("Retrying in 3 seconds...");
       await Bun.sleep(3000); // 3s delay
     }
   }

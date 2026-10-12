@@ -1,4 +1,10 @@
 import { $ } from "bun";
+import { logIngestSuccess, logIngestWarning } from "~/utils/ingestLogger";
+
+type IngestLogContext = {
+  jobId: string;
+  youtubeId: string;
+};
 
 type ParsedYTMetadata = {
   artists: string[];
@@ -7,14 +13,30 @@ type ParsedYTMetadata = {
   upload_date: string | null;
 };
 
-export async function getAllUrlsFromPlaylist(url: string): Promise<string[]> {
+export async function getAllUrlsFromPlaylist(
+  url: string,
+  requestId?: string,
+): Promise<string[]> {
   // if it's not a playlist, just return it
-  if (!url.includes("list=")) return [url];
+  if (!url.includes("list=")) {
+    logIngestSuccess("import_url_expanded", {
+      requestId,
+      isPlaylist: false,
+      urlCount: 1,
+    });
+    return [url];
+  }
 
   const output =
     await $`yt-dlp --flat-playlist --print "%(url)s" ${url}`.text();
 
-  return output.trim().split("\n").filter(Boolean);
+  const urls = output.trim().split("\n").filter(Boolean);
+  logIngestSuccess("import_playlist_expanded", {
+    requestId,
+    isPlaylist: true,
+    urlCount: urls.length,
+  });
+  return urls;
 }
 
 /* Parse YouTube urls of different forms to extract standard url and video id */
@@ -131,9 +153,7 @@ export function parseYtDlpMetadata(metadata: string): ParsedYTMetadata {
 
   // Fallback to parsing title
   if (!track || artists.length === 0) {
-    console.log("original:", parsedMetadata.title);
     const title = clean(parsedMetadata.title ?? "");
-    console.log("cleaned title:", title);
 
     if (title.length === 0) {
       throw new Error("No clean title in video");
@@ -282,19 +302,25 @@ async function getCoverArtForRelease(release: any) {
     },
   );
 
-  if (res.ok) {
-    const data = await res.json();
-    release["release-group"].cover_art_url = data.images[0].image;
-    release["release-group"].cover_art_url_thumbnail_large =
-      data.images[0].thumbnails.large;
-    release["release-group"].cover_art_url_thumbnail_small =
-      data.images[0].thumbnails.small;
+  if (!res.ok) {
+    throw new Error(`Cover Art Archive request failed: ${res.status}`);
   }
+
+  const data = await res.json();
+  release["release-group"].cover_art_url = data.images[0].image;
+  release["release-group"].cover_art_url_thumbnail_large =
+    data.images[0].thumbnails.large;
+  release["release-group"].cover_art_url_thumbnail_small =
+    data.images[0].thumbnails.small;
 
   return release;
 }
 
-export async function extractRecordingAndRelease(musicbrainzmetadata: any) {
+export async function extractRecordingAndRelease(
+  musicbrainzmetadata: any,
+  ytMetadata: ParsedYTMetadata,
+  context: IngestLogContext,
+) {
   let recording = musicbrainzmetadata.recordings?.[0];
   let release;
 
@@ -302,8 +328,11 @@ export async function extractRecordingAndRelease(musicbrainzmetadata: any) {
     // select a release from all releases in recording
     try {
       release = findFirstCompleteRelease(recording);
-    } catch {
-      console.log("No complete release found. Defaulting to unknown");
+    } catch (error) {
+      await logIngestWarning("musicbrainz_release_incomplete", error, {
+        ...context,
+        stage: "release_selection",
+      });
       release = {
         date: 0,
         "release-group": {
@@ -314,19 +343,24 @@ export async function extractRecordingAndRelease(musicbrainzmetadata: any) {
       };
     }
 
-    try {
-      release = await getCoverArtForRelease(release);
-    } catch {
-      console.log(
-        "Error while trying to get cover art. Proceeding without cover art.",
-      );
+    if (release["release-group"].id) {
+      try {
+        release = await getCoverArtForRelease(release);
+      } catch (error) {
+        await logIngestWarning("cover_art_lookup_failed", error, {
+          ...context,
+          stage: "cover_art_lookup",
+        });
+      }
     }
   } else {
-    console.log(
-      "No MusicBrainz metadata found, falling back to YouTube metadata",
-    );
-
-    recording = createFallbackRecording(parseYtDlpMetadata);
+    logIngestSuccess("metadata_fallback_selected", {
+      ...context,
+      stage: "metadata_reconciliation",
+      source: "youtube",
+      reason: "no_musicbrainz_recording",
+    });
+    recording = createFallbackRecording(ytMetadata);
     release = recording.release;
   }
 

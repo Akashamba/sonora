@@ -9,6 +9,7 @@ import {
   type InsertedAristType,
 } from "~/server/db/queries/insertTrackArtist";
 import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
+import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
 
 export interface TrackInfoType {
   release: {
@@ -33,28 +34,53 @@ export interface TrackInfoType {
   };
 }
 
-export async function addNewTrack(trackInfo: TrackInfoType) {
-  await db.transaction(async (tx) => {
-    // Upsert release group
-    const release_group_id = await upsertReleaseGroup(tx, trackInfo.release);
+export async function addNewTrack(
+  trackInfo: TrackInfoType,
+  context: { jobId: string },
+) {
+  let stage = "release_group_upsert";
+  try {
+    await db.transaction(async (tx) => {
+      // Upsert release group
+      const release_group_id = await upsertReleaseGroup(tx, trackInfo.release);
 
-    // Insert track
-    const insertedTrackId = await insertTrack(tx, {
-      youtube_id: trackInfo.youtubeId,
-      release_group_id: release_group_id,
-      filePath: trackInfo.filePath,
-      recording: trackInfo.recording,
+      // Insert track
+      stage = "track_insert";
+      const insertedTrackId = await insertTrack(tx, {
+        youtube_id: trackInfo.youtubeId,
+        release_group_id: release_group_id,
+        filePath: trackInfo.filePath,
+        recording: trackInfo.recording,
+      });
+
+      // Upsert artists and capture ids to create track <-> artist relationship
+      stage = "artist_upserts";
+      const insertedArtistIds = await Promise.all(
+        trackInfo.recording["artist-credit"].map(async (artist, i) => {
+          const artistId = await insertArtist(tx, artist);
+          return { artistId, pos: i + 1, joinphrase: artist.joinphrase };
+        }),
+      );
+
+      // Insert track_artist join table
+      stage = "track_artist_insert";
+      await insertTrackArtist(tx, insertedTrackId, insertedArtistIds);
     });
+  } catch (error) {
+    await logIngestFailure("database_transaction_failed", error, {
+      ...context,
+      youtubeId: trackInfo.youtubeId,
+      trackTitle: trackInfo.recording.title,
+      stage,
+    });
+    throw error;
+  }
 
-    // Upsert artists and capture ids to create track <-> artist relationship
-    const insertedArtistIds = await Promise.all(
-      trackInfo.recording["artist-credit"].map(async (artist, i) => {
-        const artistId = await insertArtist(tx, artist);
-        return { artistId, pos: i + 1, joinphrase: artist.joinphrase };
-      }),
-    );
-
-    // Insert track_artist join table
-    await insertTrackArtist(tx, insertedTrackId, insertedArtistIds);
+  logIngestSuccess("database_transaction_committed", {
+    ...context,
+    youtubeId: trackInfo.youtubeId,
+    trackTitle: trackInfo.recording.title,
+    releaseTitle: trackInfo.release["release-group"].title,
+    artistCount: trackInfo.recording["artist-credit"].length,
   });
 }
