@@ -18,6 +18,8 @@ import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
 import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
 import { blockInDemo } from "./middleware/demo-blocker";
 import { readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -441,6 +443,7 @@ const server = Bun.serve({
     },
     // handle importing a track from a URL
     "/import": blockInDemo(async (req) => {
+      const requestId = randomUUID();
       // Handle CORS preflight
       if (req.method === "OPTIONS") {
         return new Response(null, {
@@ -457,7 +460,11 @@ const server = Bun.serve({
       let body;
       try {
         body = await req.json();
-      } catch {
+      } catch (error) {
+        await logIngestFailure("import_invalid_json", error, {
+          requestId,
+          stage: "request_validation",
+        });
         return Response.json(
           { message: "invalid or empty JSON body" },
           { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
@@ -466,7 +473,12 @@ const server = Bun.serve({
 
       const url = body?.url;
 
-      if (!url) {
+      if (typeof url !== "string" || url.trim().length === 0) {
+        await logIngestFailure(
+          "import_url_missing_or_invalid",
+          new Error("Expected a non-empty URL string in request body"),
+          { requestId, stage: "request_validation" },
+        );
         return Response.json(
           {
             message: "no url sent",
@@ -475,15 +487,52 @@ const server = Bun.serve({
             headers: {
               "Access-Control-Allow-Origin": "*",
             },
-            status: 500,
+            status: 400,
           },
         );
       }
 
-      const urls = await getAllUrlsFromPlaylist(url);
+      logIngestSuccess("import_received", {
+        requestId,
+        isPlaylist: url.includes("list="),
+      });
+      let urlCount = 0;
+      try {
+        const urls = await getAllUrlsFromPlaylist(url, requestId);
+        urlCount = urls.length;
+        if (urlCount === 0) {
+          await logIngestFailure(
+            "import_playlist_empty",
+            new Error("Playlist expansion returned no video URLs"),
+            { requestId, stage: "playlist_expansion" },
+          );
+          return Response.json(
+            { message: "playlist did not contain any importable videos" },
+            { status: 422, headers: { "Access-Control-Allow-Origin": "*" } },
+          );
+        }
 
-      urls.forEach((url) => db.insert(jobs).values({ url }).run());
-      console.log("created jobs to ingest tracks");
+        db.transaction((tx) => {
+          urls.forEach((itemUrl) =>
+            tx.insert(jobs).values({ url: itemUrl }).run(),
+          );
+        });
+      } catch (error) {
+        await logIngestFailure("import_queue_creation_failed", error, {
+          requestId,
+          stage: "queue_creation",
+          urlCount,
+        });
+        return Response.json(
+          { message: "failed to create import jobs" },
+          { status: 500, headers: { "Access-Control-Allow-Origin": "*" } },
+        );
+      }
+
+      logIngestSuccess("import_jobs_created", {
+        requestId,
+        jobCount: urlCount,
+      });
 
       return Response.json(
         {
