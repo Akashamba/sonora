@@ -1,5 +1,9 @@
 import { $ } from "bun";
-import { logIngestSuccess, logIngestWarning } from "~/utils/ingestLogger";
+import {
+  logIngestInfo,
+  logIngestSuccess,
+  logIngestWarning,
+} from "~/utils/ingestLogger";
 
 type IngestLogContext = {
   jobId: string;
@@ -354,7 +358,7 @@ export async function extractRecordingAndRelease(
       }
     }
   } else {
-    logIngestSuccess("metadata_fallback_selected", {
+    await logIngestInfo("metadata_fallback_selected", {
       ...context,
       stage: "metadata_reconciliation",
       source: "youtube",
