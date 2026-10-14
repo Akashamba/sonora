@@ -89,6 +89,17 @@ export function logIngestSuccess(event: string, fields: LogFields = {}) {
   );
 }
 
+// Prints the event like logIngestSuccess and also appends it to the day's jsonl file.
+export async function logIngestInfo(event: string, fields: LogFields = {}) {
+  logIngestSuccess(event, fields);
+  await writeErrorRecord({
+    timestamp: timestamp(),
+    level: "info",
+    event,
+    ...fields,
+  });
+}
+
 export async function logIngestFailure(
   event: string,
   error: unknown,
