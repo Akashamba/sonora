@@ -11,7 +11,7 @@ const databasePath = join(databaseDir, "test.sqlite");
 process.env.DB_FILE_NAME = databasePath;
 let tempDir: string;
 
-function todayLog() { return join(process.env.LOG_DIR!, `ingest-${new Date().toISOString().slice(0, 10)}.jsonl`); }
+function todayLog() { return join(process.env.LOG_DIR!, `ingest-${new Date().toLocaleDateString("en-CA")}.jsonl`); }
 async function records() {
   try { return (await readFile(todayLog(), "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)); }
   catch (error: any) { if (error.code === "ENOENT") return []; throw error; }

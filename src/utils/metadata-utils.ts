@@ -5,6 +5,7 @@ import {
   logIngestInfo,
   logIngestSuccess,
   logIngestWarning,
+  writeLogArtifact,
 } from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
 import { parseJson } from "~/utils/jsonErrors";
@@ -15,7 +16,14 @@ type IngestLogContext = {
   youtubeId: string;
 };
 
+// One MusicBrainz lookup, linked to its saved raw response file.
+type MusicBrainzLogContext = Partial<IngestLogContext> & {
+  musicbrainzLookupId?: string;
+  musicbrainzResponseFile?: string;
+};
+
 const DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS = 30000;
+const MAX_ERROR_BODY_BYTES = 256 * 1024;
 
 // Thrown for failed HTTP responses and for fetch-level failures (no response).
 export class ExternalRequestError extends Error {
@@ -67,6 +75,8 @@ async function fetchExternal(
   host: string,
   url: string,
   record: ExternalCallRecord,
+  // Runs before the HTTP error is thrown. Must not throw.
+  onErrorResponse?: (res: Response) => Promise<void>,
 ): Promise<Response> {
   const prefix = REQUEST_FAILED_PREFIX[service];
 
@@ -93,7 +103,10 @@ async function fetchExternal(
   }
 
   record.status = res.status;
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter !== null) record.retryAfter = retryAfter;
   if (!res.ok) {
+    await onErrorResponse?.(res);
     throw new ExternalRequestError(`${prefix}: ${res.status}`, {
       service,
       host,
@@ -110,6 +123,9 @@ type ParsedYTMetadata = {
   track: string | null;
   album: string | null;
   upload_date: string | null;
+  // structured: yt-dlp track and artist were used as-is.
+  // title_split: artist or track was missing, so the video title was split.
+  parsePath: "structured" | "title_split";
 };
 
 export async function getAllUrlsFromPlaylist(
@@ -126,8 +142,10 @@ export async function getAllUrlsFromPlaylist(
     return [url];
   }
 
-  const output =
-    await $`yt-dlp --flat-playlist --print "%(url)s" ${url}`.text();
+  const output = await logExternalCall(
+    { service: "yt_dlp_playlist", requestId },
+    () => $`yt-dlp --flat-playlist --print "%(url)s" ${url}`.text(),
+  );
 
   const urls = output.trim().split("\n").filter(Boolean);
   logIngestSuccess("import_playlist_expanded", {
@@ -231,7 +249,17 @@ export async function fetchYtMetadata(
         "yt-dlp --dump-json",
       ),
   );
-  return parseYtDlpMetadata(metadata);
+  const parsed = parseYtDlpMetadata(metadata);
+  await logIngestInfo("yt_metadata_parsed", {
+    ...context,
+    parsePath: parsed.parsePath,
+    rawTitle: metadata.title ?? null,
+    rawTrack: metadata.track ?? null,
+    rawArtist: metadata.artist ?? null,
+    parsedTrack: parsed.track,
+    parsedArtists: parsed.artists,
+  });
+  return parsed;
 }
 
 export function parseYtDlpMetadata(
@@ -255,6 +283,7 @@ export function parseYtDlpMetadata(
   let track: string | null = parsedMetadata.track ?? null;
   let album: string | null = parsedMetadata.album ?? null;
   let artists: string[] = [];
+  let parsePath: ParsedYTMetadata["parsePath"] = "structured";
   const upload_date = formatUploadDate(parsedMetadata.upload_date);
 
   if (parsedMetadata.artist) {
@@ -263,6 +292,7 @@ export function parseYtDlpMetadata(
 
   // Fallback to parsing title
   if (!track || artists.length === 0) {
+    parsePath = "title_split";
     const title = clean(parsedMetadata.title ?? "");
 
     if (title.length === 0) {
@@ -293,6 +323,7 @@ export function parseYtDlpMetadata(
     track: track ? clean(track) : null,
     album: album ? clean(album) : null,
     upload_date,
+    parsePath,
   };
 }
 
@@ -305,14 +336,120 @@ function splitArtists(input: string): string[] {
 
 /* MUSICBRAINZ METADATA */
 // TODO: standardize return type for musicbrainz metadata
+// Path of a lookup's raw MusicBrainz response, relative to LOG_DIR.
+export function musicbrainzResponseFileFor(musicbrainzLookupId: string) {
+  return `musicbrainz/${musicbrainzLookupId}.json`;
+}
+
+// Records which MusicBrainz recording was picked. The first recording is taken
+// without a score check; this only makes the pick visible in the file.
+export async function logMusicBrainzMatchSelected(
+  musicbrainzmetadata: any,
+  context: Record<string, unknown>,
+) {
+  const recording = musicbrainzmetadata?.recordings?.[0];
+  await logIngestInfo("musicbrainz_match_selected", {
+    ...context,
+    candidateCount: musicbrainzmetadata?.recordings?.length ?? 0,
+    totalCount: musicbrainzmetadata?.count ?? null,
+    selectedRecordingId: recording?.id ?? null,
+    selectedTitle: recording?.title ?? null,
+    score: recording?.score ?? null,
+    artistCredit:
+      recording?.["artist-credit"]?.map(
+        (credit: { name: string }) => credit.name,
+      ) ?? [],
+  });
+}
+
+// Keeps the raw body so a bad match can be checked against what MusicBrainz
+// returned. Saved before parsing, so a body that fails to parse is still kept.
+// A failed save is logged and does not change the lookup's outcome. The path is
+// only logged once the write has succeeded.
+async function saveMusicBrainzResponse(
+  lookup: MusicBrainzLogContext & { musicbrainzLookupId: string },
+  body: string,
+) {
+  try {
+    await writeLogArtifact(
+      musicbrainzResponseFileFor(lookup.musicbrainzLookupId),
+      body,
+    );
+  } catch (error) {
+    await logIngestWarning("musicbrainz_response_save_failed", error, {
+      ...lookup,
+    });
+  }
+}
+
+// Reads at most `limit` bytes so a large error page is not held in memory.
+// `truncated` is true only when unread bytes were left behind.
+async function readCappedBody(res: Response, limit: number) {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  let truncated = false;
+  const reader = res.body?.getReader();
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const room = limit - bytes;
+    if (value.byteLength > room) {
+      chunks.push(value.subarray(0, room));
+      bytes += room;
+      truncated = true;
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    chunks.push(value);
+    bytes += value.byteLength;
+  }
+  return {
+    text: Buffer.concat(chunks).toString("utf8"),
+    bytes,
+    truncated,
+  };
+}
+
+// Keeps the body of a failed MusicBrainz response (e.g. a 503 from rate
+// limiting), which can be HTML or JSON. Returns the fields for the failure
+// record, or nothing if no artifact was written. Never throws, so the HTTP
+// error that is thrown afterwards is unchanged.
+async function saveMusicBrainzErrorResponse(
+  lookup: MusicBrainzLogContext & { musicbrainzLookupId: string },
+  res: Response,
+): Promise<Record<string, unknown>> {
+  const errorResponseFile = `musicbrainz/${lookup.musicbrainzLookupId}.error.txt`;
+  try {
+    const body = await readCappedBody(res, MAX_ERROR_BODY_BYTES);
+    await writeLogArtifact(errorResponseFile, body.text);
+    return {
+      errorResponseFile,
+      errorResponseBytes: body.bytes,
+      errorResponseTruncated: body.truncated,
+    };
+  } catch (error) {
+    await logIngestWarning("musicbrainz_error_response_save_failed", error, {
+      ...lookup,
+      status: res.status,
+    });
+    return {};
+  }
+}
+
 export async function fetchMusicBrainzMetadata(
   metadata: {
     artists: string[];
     album: string | null;
     track: string | null;
   },
-  context: Partial<IngestLogContext> = {},
+  context: MusicBrainzLogContext = {},
 ) {
+  // one id per lookup, so the query, response file and track record can be linked
+  const lookup = {
+    ...context,
+    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+  };
+
   // build query
   let query = "";
 
@@ -328,19 +465,42 @@ export async function fetchMusicBrainzMetadata(
   const escaped = luceneEscape(query);
   const urlParam = encodeURIComponent(escaped);
 
-  console.log("Sending query to MusicBrainz:", urlParam);
+  await logIngestInfo("musicbrainz_query_sent", {
+    ...lookup,
+    query: escaped,
+    encodedQuery: urlParam,
+  });
 
   // Query MusicBrainz
   const host = "musicbrainz.org";
   const url = `https://${host}/ws/2/recording?query=${urlParam}&fmt=json`;
-  return logExternalCall(
-    { service: "musicbrainz", host, ...context },
-    async (record) => {
-      const res = await fetchExternal("musicbrainz", host, url, record);
-      const data = parseJson(await res.text(), "MusicBrainz");
-      return data;
-    },
-  );
+  // No retry loop here, so every MusicBrainz call is attempt 1.
+  // The error-body path adds fields to callFields before the call rejects;
+  // logExternalCall spreads them into external_call_finished when it logs.
+  const callFields: Record<string, unknown> = {
+    service: "musicbrainz",
+    host,
+    url,
+    attempt: 1,
+    ...lookup,
+  };
+  return logExternalCall(callFields, async (record) => {
+    const res = await fetchExternal(
+      "musicbrainz",
+      host,
+      url,
+      record,
+      async (errorRes) => {
+        Object.assign(
+          callFields,
+          await saveMusicBrainzErrorResponse(lookup, errorRes),
+        );
+      },
+    );
+    const body = await res.text();
+    await saveMusicBrainzResponse(lookup, body);
+    return parseJson(body, "MusicBrainz");
+  });
 }
 
 /* FALLBACK RECORDING if musicbrainz recording is malformed or incomplete */
@@ -404,8 +564,16 @@ async function getCoverArtForRelease(
 ) {
   const host = "coverartarchive.org";
   const url = `https://${host}/release-group/${release["release-group"].id}`;
+  // No retry loop here, so every Cover Art call is attempt 1.
   return logExternalCall(
-    { service: "cover_art", host, ...context },
+    {
+      service: "cover_art",
+      host,
+      url,
+      releaseGroupId: release["release-group"].id,
+      attempt: 1,
+      ...context,
+    },
     async (record) => {
       const res = await fetchExternal("cover_art", host, url, record);
       const data = parseJson(await res.text(), "Cover Art Archive");
@@ -430,8 +598,8 @@ export type ReleaseDateSelection = {
 
 export async function extractRecordingAndRelease(
   musicbrainzmetadata: any,
-  ytMetadata: ParsedYTMetadata,
-  context: IngestLogContext,
+  ytMetadata: Omit<ParsedYTMetadata, "parsePath">,
+  context: IngestLogContext & MusicBrainzLogContext,
 ) {
   let recording = musicbrainzmetadata.recordings?.[0];
   let release;

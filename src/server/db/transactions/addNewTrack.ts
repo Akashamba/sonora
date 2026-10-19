@@ -10,7 +10,7 @@ import {
 } from "~/server/db/queries/insertTrackArtist";
 import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
 import { describeDateValue } from "~/utils/dateLogging";
-import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
+import { logIngestFailure, logIngestInfo } from "~/utils/ingestLogger";
 
 export interface TrackInfoType {
   release: {
@@ -37,11 +37,16 @@ export interface TrackInfoType {
 
 export async function addNewTrack(
   trackInfo: TrackInfoType,
-  context: { jobId: string },
+  context: {
+    jobId: string;
+    musicbrainzLookupId?: string;
+    musicbrainzResponseFile?: string;
+  },
 ) {
   let stage = "release_group_upsert";
+  let committed: { trackId: string; releaseGroupId: string };
   try {
-    await db.transaction(async (tx) => {
+    committed = await db.transaction(async (tx) => {
       // Upsert release group
       const release_group_id = await upsertReleaseGroup(tx, trackInfo.release);
 
@@ -66,6 +71,8 @@ export async function addNewTrack(
       // Insert track_artist join table
       stage = "track_artist_insert";
       await insertTrackArtist(tx, insertedTrackId, insertedArtistIds);
+
+      return { trackId: insertedTrackId, releaseGroupId: release_group_id };
     });
   } catch (error) {
     await logIngestFailure("database_transaction_failed", error, {
@@ -81,11 +88,18 @@ export async function addNewTrack(
     throw error;
   }
 
-  logIngestSuccess("database_transaction_committed", {
+  // Written to the jsonl file too, so a wrong track can be traced to its
+  // MusicBrainz ids and saved response.
+  await logIngestInfo("database_transaction_committed", {
     ...context,
     youtubeId: trackInfo.youtubeId,
+    trackId: committed.trackId,
+    releaseGroupId: committed.releaseGroupId,
+    musicbrainzRecordingId: trackInfo.recording.id ?? null,
+    musicbrainzReleaseGroupId: trackInfo.release["release-group"].id ?? null,
     trackTitle: trackInfo.recording.title,
     releaseTitle: trackInfo.release["release-group"].title,
+    releaseDate: describeDateValue(trackInfo.release.date),
     artistCount: trackInfo.recording["artist-credit"].length,
   });
 }

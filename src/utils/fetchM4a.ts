@@ -1,5 +1,9 @@
 import { $ } from "bun";
-import { logExternalCall, logIngestWarning } from "~/utils/ingestLogger";
+import {
+  logExternalCall,
+  logIngestInfo,
+  logIngestWarning,
+} from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
 
 export async function downloadWithRetry(
@@ -28,7 +32,15 @@ export async function downloadWithRetry(
         -o ${filePath} \
         ${youtubeUrl}`,
       );
-      return i + 1;
+      // Written to the jsonl file so a download that recovered on retry still has a success record.
+      const downloadAttempts = i + 1;
+      await logIngestInfo("audio_download_succeeded", {
+        ...context,
+        stage: "audio_download",
+        filePath,
+        downloadAttempts,
+      });
+      return downloadAttempts;
     } catch (e) {
       await logIngestWarning("audio_download_attempt_failed", e, {
         ...context,

@@ -112,6 +112,7 @@ export const jobs = sqliteTable("jobs", {
   url: text().notNull(), // restricted to only urls for now, can be extended to support other types of jobs later (or other jobs can be managed through different tables)
   status: text().notNull().default("queued"), // (queued, running, completed, failed) add check condition to make this an enum
   error: text(),
+  claim_count: int().notNull().default(0), // how many times a worker has claimed this job, so retries can be told apart
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

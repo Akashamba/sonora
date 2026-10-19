@@ -19,7 +19,12 @@ import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRe
 import { blockInDemo } from "./middleware/demo-blocker";
 import { readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
+import {
+  logIngestFailure,
+  logIngestInfo,
+  logIngestSuccess,
+} from "~/utils/ingestLogger";
+import { routeDbError } from "./routeDbError";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -110,8 +115,13 @@ const server = Bun.serve({
       try {
         const data = fetchReleaseWithTracks(req.params.id);
         return Response.json({ data: data });
-      } catch {
-        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      } catch (error) {
+        return routeDbError(
+          "route_db_read_failed",
+          "/release-groups/:id/tracks",
+          req,
+          error,
+        );
       }
     },
     // return the content for per artist page (tracks in artist)
@@ -140,21 +150,30 @@ const server = Bun.serve({
       }
     },
     // skip to next track in queue, and refill queue if necessary
-    "/tracks/next": async () => {
-      const nextTrack = fetchNextTrackWithRefill();
+    "/tracks/next": async (req) => {
+      try {
+        const nextTrack = fetchNextTrackWithRefill();
 
-      if (!nextTrack || !nextTrack.track_id) {
-        return Response.json(
-          { error: "INTERNAL SERVER ERROR: Queue is empty" },
-          {
-            status: 504,
-          },
+        if (!nextTrack || !nextTrack.track_id) {
+          return Response.json(
+            { error: "INTERNAL SERVER ERROR: Queue is empty" },
+            {
+              status: 504,
+            },
+          );
+        }
+
+        return Response.json({
+          data: { track_id: nextTrack.track_id },
+        });
+      } catch (error) {
+        return routeDbError(
+          "route_db_write_failed",
+          "/tracks/next",
+          req,
+          error,
         );
       }
-
-      return Response.json({
-        data: { track_id: nextTrack.track_id },
-      });
     },
     // skip to previous track in queue, and refill queue if necessary (currently only restarts the current track)
     "/tracks/previous": async () => {
@@ -214,8 +233,13 @@ const server = Bun.serve({
         });
 
         return Response.json({ data: { track_id: firstTrack?.id } });
-      } catch {
-        return new Response("INTERNAL SERVER ERROR", { status: 500 });
+      } catch (error) {
+        return routeDbError(
+          "route_db_write_failed",
+          "/release-groups/:id/queue",
+          req,
+          error,
+        );
       }
     }),
     // search for tracks by track title, artist, or release group name
@@ -300,11 +324,13 @@ const server = Bun.serve({
         return Response.json({
           data: { liked: !currentStatus?.liked },
         });
-      } catch (err) {
-        console.log(
-          `[${new Date().getUTCDate()}] error: ${(err as Error).message}`,
+      } catch (error) {
+        return routeDbError(
+          "route_db_write_failed",
+          "/tracks/:id/like",
+          req,
+          error,
         );
-        return new Response("INTERNAL SERVER ERROR", { status: 500 });
       }
     }),
     // stream a track
@@ -382,45 +408,54 @@ const server = Bun.serve({
       const shouldRecordHistory = !rangeHeader || start === 0;
 
       if (shouldRecordHistory) {
-        // Set last played song as completed and update play counts
-        db.transaction((tx) => {
-          // get last played
-          const last_played = tx
-            .select({
-              id: history.id,
-              track_id: history.track_id,
-              completed: history.completed,
-              count: play_stats.count,
-            })
-            .from(history)
-            .leftJoin(play_stats, eq(play_stats.track_id, history.track_id))
-            .orderBy(desc(history.id))
-            .limit(1)
-            .get();
-
-          if (last_played?.completed === 0) {
-            // update history with completed 1
-            tx.update(history)
-              .set({ completed: 1 })
-              .where(eq(history.id, last_played?.id!))
-              .run();
-            // upsert song to play_stats with count 1 (default) or increment by 1
-            tx.insert(play_stats)
-              .values({ track_id: last_played?.track_id })
-              .onConflictDoUpdate({
-                target: play_stats.track_id,
-                set: { count: last_played?.count! + 1 },
+        try {
+          // Set last played song as completed and update play counts
+          db.transaction((tx) => {
+            // get last played
+            const last_played = tx
+              .select({
+                id: history.id,
+                track_id: history.track_id,
+                completed: history.completed,
+                count: play_stats.count,
               })
-              .run();
-          }
-        });
+              .from(history)
+              .leftJoin(play_stats, eq(play_stats.track_id, history.track_id))
+              .orderBy(desc(history.id))
+              .limit(1)
+              .get();
 
-        // set now playing: add to history with completed=0 (default)
-        db.insert(history)
-          .values({
-            track_id: track.id,
-          })
-          .run();
+            if (last_played?.completed === 0) {
+              // update history with completed 1
+              tx.update(history)
+                .set({ completed: 1 })
+                .where(eq(history.id, last_played?.id!))
+                .run();
+              // upsert song to play_stats with count 1 (default) or increment by 1
+              tx.insert(play_stats)
+                .values({ track_id: last_played?.track_id })
+                .onConflictDoUpdate({
+                  target: play_stats.track_id,
+                  set: { count: last_played?.count! + 1 },
+                })
+                .run();
+            }
+          });
+
+          // set now playing: add to history with completed=0 (default)
+          db.insert(history)
+            .values({
+              track_id: track.id,
+            })
+            .run();
+        } catch (error) {
+          return routeDbError(
+            "route_db_write_failed",
+            "/tracks/:id/stream",
+            req,
+            error,
+          );
+        }
       }
 
       // Build the response body. .slice() returns a lazy view — no full read into memory.
@@ -496,27 +531,45 @@ const server = Bun.serve({
         requestId,
         isPlaylist: url.includes("list="),
       });
-      let urlCount = 0;
+      let urls: string[];
       try {
-        const urls = await getAllUrlsFromPlaylist(url, requestId);
-        urlCount = urls.length;
-        if (urlCount === 0) {
-          await logIngestFailure(
-            "import_playlist_empty",
-            new Error("Playlist expansion returned no video URLs"),
-            { requestId, stage: "playlist_expansion" },
-          );
-          return Response.json(
-            { message: "playlist did not contain any importable videos" },
-            { status: 422, headers: { "Access-Control-Allow-Origin": "*" } },
-          );
-        }
-
-        db.transaction((tx) => {
-          urls.forEach((itemUrl) =>
-            tx.insert(jobs).values({ url: itemUrl }).run(),
-          );
+        urls = await getAllUrlsFromPlaylist(url, requestId);
+      } catch (error) {
+        await logIngestFailure("import_playlist_expansion_failed", error, {
+          requestId,
+          stage: "playlist_expansion",
         });
+        return Response.json(
+          { message: "failed to create import jobs" },
+          { status: 500, headers: { "Access-Control-Allow-Origin": "*" } },
+        );
+      }
+
+      const urlCount = urls.length;
+      if (urlCount === 0) {
+        await logIngestFailure(
+          "import_playlist_empty",
+          new Error("Playlist expansion returned no video URLs"),
+          { requestId, stage: "playlist_expansion" },
+        );
+        return Response.json(
+          { message: "playlist did not contain any importable videos" },
+          { status: 422, headers: { "Access-Control-Allow-Origin": "*" } },
+        );
+      }
+
+      let jobIds: string[];
+      try {
+        jobIds = db.transaction((tx) =>
+          urls.map(
+            (itemUrl) =>
+              tx
+                .insert(jobs)
+                .values({ url: itemUrl })
+                .returning({ id: jobs.id })
+                .get().id,
+          ),
+        );
       } catch (error) {
         await logIngestFailure("import_queue_creation_failed", error, {
           requestId,
@@ -529,9 +582,11 @@ const server = Bun.serve({
         );
       }
 
-      logIngestSuccess("import_jobs_created", {
+      // Job ids let a job be traced back to this import (worker records carry jobId).
+      await logIngestInfo("import_jobs_created", {
         requestId,
-        jobCount: urlCount,
+        jobCount: jobIds.length,
+        jobIds,
       });
 
       return Response.json(

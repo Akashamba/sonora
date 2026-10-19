@@ -1,6 +1,7 @@
 // TODO: Group all unknown album songs under the same album, same for artists, not for unknown name
 
 import { queryMatches } from "~/server/db/queries/queryTrackMatches";
+import { queryTracksByFilePath } from "~/server/db/queries/queryTracksByFilePath";
 import { addNewTrack } from "~/server/db/transactions/addNewTrack";
 import { sanitizeFileName } from "~/utils/audioPath";
 import { downloadWithRetry } from "~/utils/fetchM4a";
@@ -9,28 +10,80 @@ import {
   fetchMusicBrainzMetadata,
   fetchYtMetadata,
   getAudioLengthMs,
+  logMusicBrainzMatchSelected,
+  musicbrainzResponseFileFor,
   parseYouTubeUrl,
 } from "~/utils/metadata-utils";
-import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
+import {
+  logIngestFailure,
+  logIngestInfo,
+  logIngestWarning,
+} from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
+
+// Logging only. Records whether the target path already exists and which tracks
+// already own it in the DB. Never throws, so it cannot change the ingest outcome.
+export async function logAudioPathState(
+  filePath: string,
+  context: Record<string, unknown>,
+) {
+  try {
+    const fileExisted = await Bun.file(filePath).exists();
+    const owners = await queryTracksByFilePath(filePath);
+    await logIngestInfo("audio_path_checked", {
+      ...context,
+      filePath,
+      fileExisted,
+      ownerCount: owners.length,
+      ownerYoutubeIds: owners.map((owner) => owner.youtubeId),
+      ownerTrackIds: owners.map((owner) => owner.id),
+    });
+  } catch (error) {
+    await logIngestWarning("audio_path_check_failed", error, {
+      ...context,
+      filePath,
+    });
+  }
+}
+
+// Filled in as the ingest runs, so a caller still knows what was saved if the
+// ingest throws afterwards.
+export type IngestProgress = { trackCommitted?: boolean };
 
 // for a given url:
 // - fetch metadata from youtube
 // - Looks up high quality metadata from musicbrainz. use fallback data if not available
 // - check if already in db, if not download
 // - write to db
-export async function ingestTrack(url: string, jobId: string) {
+// `timing.queuedForMs` is the wait between the job's creation and its claim. The
+// caller measures it, since only the worker knows when the job was claimed.
+export async function ingestTrack(
+  url: string,
+  jobId: string,
+  progress: IngestProgress = {},
+  timing: { queuedForMs?: number } = {},
+) {
   let youtubeId: string | undefined;
   let stage = "parse_youtube_url";
   let stageStartedAt = Date.now();
-  const context = () => ({ jobId, youtubeId, sourceUrl: url, stage });
-  const beginStage = (nextStage: string) => {
+  const ingestStartedAt = performance.now();
+  const musicbrainzLookupId = crypto.randomUUID();
+  const musicbrainzResponseFile =
+    musicbrainzResponseFileFor(musicbrainzLookupId);
+  const context = () => ({
+    jobId,
+    youtubeId,
+    sourceUrl: url,
+    stage,
+    musicbrainzLookupId,
+  });
+  const beginStage = async (nextStage: string) => {
     stage = nextStage;
     stageStartedAt = Date.now();
-    logIngestSuccess("ingest_stage_started", context());
+    await logIngestInfo("ingest_stage_started", context());
   };
-  const completeStage = (fields: Record<string, unknown> = {}) => {
-    logIngestSuccess("ingest_stage_completed", {
+  const completeStage = async (fields: Record<string, unknown> = {}) => {
+    await logIngestInfo("ingest_stage_completed", {
       ...context(),
       durationMs: Date.now() - stageStartedAt,
       ...fields,
@@ -38,64 +91,84 @@ export async function ingestTrack(url: string, jobId: string) {
   };
 
   try {
-    logIngestSuccess("ingest_started", { jobId, sourceUrl: url });
+    await logIngestInfo("ingest_started", { jobId, sourceUrl: url });
     // parse url to confirm validity and extract id
-    beginStage("parse_youtube_url");
+    await beginStage("parse_youtube_url");
     const [parsedYoutubeId, youtubeUrl] = parseYouTubeUrl(url);
     youtubeId = parsedYoutubeId;
-    completeStage({ youtubeId });
+    await completeStage({ youtubeId });
 
     // Get metadata from YouTube
-    beginStage("youtube_metadata");
+    await beginStage("youtube_metadata");
     const ytMetadata = await fetchYtMetadata(youtubeUrl, {
       jobId,
       youtubeId,
     });
-    completeStage({
+    await completeStage({
       track: ytMetadata.track,
       album: ytMetadata.album,
       artists: ytMetadata.artists,
     });
 
     // Get metadata from MusicBrainz
-    beginStage("musicbrainz_lookup");
+    await beginStage("musicbrainz_lookup");
     const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata, {
       jobId,
       youtubeId,
+      musicbrainzLookupId,
     });
     const musicbrainzRecording = musicbrainzmetadata?.recordings?.[0];
-    completeStage({
+    await completeStage({
       resultCount:
         musicbrainzmetadata?.count ??
         musicbrainzmetadata?.recordings?.length ??
         0,
       selectedRecordingId: musicbrainzRecording?.id ?? null,
     });
+    await logMusicBrainzMatchSelected(musicbrainzmetadata, {
+      ...context(),
+      musicbrainzResponseFile,
+    });
 
     // Check if track already exists
-    beginStage("duplicate_check");
-    const matches = await queryMatches(
-      youtubeId,
-      musicbrainzRecording?.id ?? "",
-    );
+    await beginStage("duplicate_check");
+    const recordingId = musicbrainzRecording?.id ?? "";
+    const matches = await queryMatches(youtubeId, recordingId);
     if (matches.length > 0) {
-      completeStage({ duplicate: true, matchCount: matches.length });
-      logIngestSuccess("ingest_skipped_duplicate", {
+      // Same comparisons as queryMatches, so the log shows which key(s) matched.
+      const matchedYoutubeId = matches.some(
+        (match) => match.youtube_id === youtubeId,
+      );
+      const matchedRecordingId = matches.some(
+        (match) => match.musicbrainz_recording_id === recordingId,
+      );
+      const matchedBy = [
+        ...(matchedYoutubeId ? ["youtube_id"] : []),
+        ...(matchedRecordingId ? ["recording_id"] : []),
+      ];
+      await completeStage({ duplicate: true, matchCount: matches.length });
+      await logIngestInfo("ingest_skipped_duplicate", {
         ...context(),
         matchCount: matches.length,
+        matchedBy,
+        matchedTrackIds: matches.map((match) => match.id),
+        totalDurationMs: Math.round(performance.now() - ingestStartedAt),
+        queuedForMs: timing.queuedForMs,
       });
       return;
     }
-    completeStage({ duplicate: false });
+    await completeStage({ duplicate: false });
 
     // Extract recording and release information with fallback
-    beginStage("metadata_reconciliation");
+    await beginStage("metadata_reconciliation");
     const [recording, release, dateSelection] =
       await extractRecordingAndRelease(musicbrainzmetadata, ytMetadata, {
         jobId,
         youtubeId,
+        musicbrainzLookupId,
+        musicbrainzResponseFile,
       });
-    completeStage({
+    await completeStage({
       selectedTitle: recording.title,
       selectedRelease: release["release-group"]?.title,
       artistCount: recording["artist-credit"]?.length ?? 0,
@@ -106,22 +179,23 @@ export async function ingestTrack(url: string, jobId: string) {
 
     // If not, download track
     const filePath = `audio/${sanitizeFileName(recording.title)}.m4a`;
-    beginStage("audio_download");
+    await beginStage("audio_download");
+    await logAudioPathState(filePath, context());
     const downloadAttempts = await downloadWithRetry(youtubeUrl, filePath, {
       jobId,
       youtubeId,
     });
-    completeStage({ filePath, downloadAttempts });
+    await completeStage({ filePath, downloadAttempts });
 
     let audioLength = recording.length;
     if (audioLength == null) {
-      beginStage("audio_duration_probe");
+      await beginStage("audio_duration_probe");
       audioLength = await getAudioLengthMs(filePath);
-      completeStage({ audioLengthMs: audioLength });
+      await completeStage({ audioLengthMs: audioLength });
     }
 
     // Write to db
-    beginStage("database_write");
+    await beginStage("database_write");
     await addNewTrack(
       {
         release: release,
@@ -132,18 +206,23 @@ export async function ingestTrack(url: string, jobId: string) {
         youtubeId: youtubeId,
         filePath: filePath,
       },
-      { jobId },
+      { jobId, musicbrainzLookupId, musicbrainzResponseFile },
     );
-    completeStage({ filePath });
-    logIngestSuccess("ingest_completed", {
+    progress.trackCommitted = true;
+    await completeStage({ filePath });
+    await logIngestInfo("ingest_completed", {
       ...context(),
       trackTitle: recording.title,
       filePath,
+      totalDurationMs: Math.round(performance.now() - ingestStartedAt),
+      queuedForMs: timing.queuedForMs,
     });
   } catch (err) {
     await logIngestFailure("ingest_failed", err, {
       ...context(),
       durationMs: Date.now() - stageStartedAt,
+      totalDurationMs: Math.round(performance.now() - ingestStartedAt),
+      queuedForMs: timing.queuedForMs,
       ...errorKindFields(err),
     });
     throw err;

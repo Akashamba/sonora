@@ -8,7 +8,7 @@ const originalPath = process.env.PATH;
 let tempDir: string;
 
 const todayLog = () =>
-  join(process.env.LOG_DIR!, `ingest-${new Date().toISOString().slice(0, 10)}.jsonl`);
+  join(process.env.LOG_DIR!, `ingest-${new Date().toLocaleDateString("en-CA")}.jsonl`);
 async function records() {
   try {
     return (await readFile(todayLog(), "utf8"))
