@@ -1,5 +1,6 @@
 import { $ } from "bun";
-import { logIngestWarning } from "~/utils/ingestLogger";
+import { logExternalCall, logIngestWarning } from "~/utils/ingestLogger";
+import { errorKindFields } from "~/utils/networkErrors";
 
 export async function downloadWithRetry(
   youtubeUrl: string,
@@ -9,7 +10,13 @@ export async function downloadWithRetry(
 ) {
   for (let i = 0; i < retries; i++) {
     try {
-      await $`yt-dlp \
+      await logExternalCall(
+        {
+          service: "yt_dlp_download",
+          ...context,
+          attempt: i + 1,
+        },
+        () => $`yt-dlp \
         -f bestaudio \
         --extract-audio \
         --audio-format m4a \
@@ -19,7 +26,8 @@ export async function downloadWithRetry(
         --convert-thumbnails jpg \
         --postprocessor-args "ffmpeg:-movflags +faststart" \
         -o ${filePath} \
-        ${youtubeUrl}`;
+        ${youtubeUrl}`,
+      );
       return i + 1;
     } catch (e) {
       await logIngestWarning("audio_download_attempt_failed", e, {
@@ -28,6 +36,7 @@ export async function downloadWithRetry(
         attempt: i + 1,
         maxAttempts: retries,
         filePath,
+        ...errorKindFields(e),
       });
       if (i === retries - 1) throw e;
       await Bun.sleep(3000); // 3s delay

@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { errorKindFields } from "~/utils/networkErrors";
 
 type LogFields = Record<string, unknown>;
 
@@ -16,6 +17,11 @@ function errorDetails(error: unknown): LogFields {
       signal?: string;
       stderr?: unknown;
       stdout?: unknown;
+      service?: unknown;
+      host?: unknown;
+      url?: unknown;
+      status?: unknown;
+      json?: unknown;
     };
     const cause = details.cause;
     const output = (value: unknown) => {
@@ -37,6 +43,11 @@ function errorDetails(error: unknown): LogFields {
       ...(details.stdout === undefined
         ? {}
         : { stdout: output(details.stdout) }),
+      ...(details.service === undefined ? {} : { service: details.service }),
+      ...(details.host === undefined ? {} : { host: details.host }),
+      ...(details.url === undefined ? {} : { url: details.url }),
+      ...(details.status === undefined ? {} : { status: details.status }),
+      ...(details.json === undefined ? {} : { json: details.json }),
       ...(cause === undefined ? {} : { cause: String(cause) }),
     };
   }
@@ -126,4 +137,39 @@ export async function logIngestWarning(
     ...fields,
     error: errorDetails(error),
   });
+}
+
+export type ExternalCallRecord = { status?: number };
+
+// Wraps one external call and emits `external_call_finished` exactly once, on
+// success and on failure (before the error propagates). `call` can set
+// `record.status` when an HTTP response arrived.
+export async function logExternalCall<T>(
+  fields: LogFields,
+  call: (record: ExternalCallRecord) => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  const record: ExternalCallRecord = {};
+
+  let result: T;
+  try {
+    result = await call(record);
+  } catch (error) {
+    await logIngestInfo("external_call_finished", {
+      ...fields,
+      durationMs: Math.round(performance.now() - startedAt),
+      outcome: "error",
+      ...(record.status === undefined ? {} : { status: record.status }),
+      ...errorKindFields(error),
+    });
+    throw error;
+  }
+
+  await logIngestInfo("external_call_finished", {
+    ...fields,
+    durationMs: Math.round(performance.now() - startedAt),
+    outcome: "ok",
+    ...(record.status === undefined ? {} : { status: record.status }),
+  });
+  return result;
 }

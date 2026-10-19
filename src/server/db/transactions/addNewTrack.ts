@@ -9,6 +9,7 @@ import {
   type InsertedAristType,
 } from "~/server/db/queries/insertTrackArtist";
 import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
+import { describeDateValue } from "~/utils/dateLogging";
 import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
 
 export interface TrackInfoType {
@@ -72,6 +73,10 @@ export async function addNewTrack(
       youtubeId: trackInfo.youtubeId,
       trackTitle: trackInfo.recording.title,
       stage,
+      recordingFirstReleaseDate: describeDateValue(
+        trackInfo.recording["first-release-date"],
+      ),
+      releaseDate: describeDateValue(trackInfo.release.date),
     });
     throw error;
   }

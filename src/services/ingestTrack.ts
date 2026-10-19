@@ -12,6 +12,7 @@ import {
   parseYouTubeUrl,
 } from "~/utils/metadata-utils";
 import { logIngestFailure, logIngestSuccess } from "~/utils/ingestLogger";
+import { errorKindFields } from "~/utils/networkErrors";
 
 // for a given url:
 // - fetch metadata from youtube
@@ -46,7 +47,10 @@ export async function ingestTrack(url: string, jobId: string) {
 
     // Get metadata from YouTube
     beginStage("youtube_metadata");
-    const ytMetadata = await fetchYtMetadata(youtubeUrl);
+    const ytMetadata = await fetchYtMetadata(youtubeUrl, {
+      jobId,
+      youtubeId,
+    });
     completeStage({
       track: ytMetadata.track,
       album: ytMetadata.album,
@@ -55,7 +59,10 @@ export async function ingestTrack(url: string, jobId: string) {
 
     // Get metadata from MusicBrainz
     beginStage("musicbrainz_lookup");
-    const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata);
+    const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata, {
+      jobId,
+      youtubeId,
+    });
     const musicbrainzRecording = musicbrainzmetadata?.recordings?.[0];
     completeStage({
       resultCount:
@@ -83,16 +90,18 @@ export async function ingestTrack(url: string, jobId: string) {
 
     // Extract recording and release information with fallback
     beginStage("metadata_reconciliation");
-    const [recording, release] = await extractRecordingAndRelease(
-      musicbrainzmetadata,
-      ytMetadata,
-      { jobId, youtubeId },
-    );
+    const [recording, release, dateSelection] =
+      await extractRecordingAndRelease(musicbrainzmetadata, ytMetadata, {
+        jobId,
+        youtubeId,
+      });
     completeStage({
       selectedTitle: recording.title,
       selectedRelease: release["release-group"]?.title,
       artistCount: recording["artist-credit"]?.length ?? 0,
       metadataSource: recording.id ? "musicbrainz" : "youtube_fallback",
+      usedPlaceholderRelease: dateSelection.usedPlaceholderRelease,
+      releaseDateSource: dateSelection.releaseDateSource,
     });
 
     // If not, download track
@@ -135,6 +144,7 @@ export async function ingestTrack(url: string, jobId: string) {
     await logIngestFailure("ingest_failed", err, {
       ...context(),
       durationMs: Date.now() - stageStartedAt,
+      ...errorKindFields(err),
     });
     throw err;
   }

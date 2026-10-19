@@ -1,14 +1,109 @@
 import { $ } from "bun";
 import {
+  type ExternalCallRecord,
+  logExternalCall,
   logIngestInfo,
   logIngestSuccess,
   logIngestWarning,
 } from "~/utils/ingestLogger";
+import { errorKindFields } from "~/utils/networkErrors";
+import { parseJson } from "~/utils/jsonErrors";
+import { describeDateValue } from "~/utils/dateLogging";
 
 type IngestLogContext = {
   jobId: string;
   youtubeId: string;
 };
+
+const DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS = 30000;
+
+// Thrown for failed HTTP responses and for fetch-level failures (no response).
+export class ExternalRequestError extends Error {
+  readonly service: string;
+  readonly host: string;
+  readonly url: string;
+  readonly status?: number;
+  readonly code?: string | number;
+
+  constructor(
+    message: string,
+    details: {
+      service: string;
+      host: string;
+      url: string;
+      status?: number;
+      code?: string | number;
+      cause?: unknown;
+    },
+  ) {
+    super(
+      message,
+      details.cause === undefined ? undefined : { cause: details.cause },
+    );
+    this.name = "ExternalRequestError";
+    this.service = details.service;
+    this.host = details.host;
+    this.url = details.url;
+    if (details.status !== undefined) this.status = details.status;
+    if (details.code !== undefined) this.code = details.code;
+  }
+}
+
+// Read at call time so the env value can change without a restart.
+function externalFetchTimeoutMs(): number {
+  const parsed = Number(process.env.EXTERNAL_FETCH_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS;
+}
+
+const REQUEST_FAILED_PREFIX = {
+  musicbrainz: "Request failed",
+  cover_art: "Cover Art Archive request failed",
+} as const;
+
+async function fetchExternal(
+  service: keyof typeof REQUEST_FAILED_PREFIX,
+  host: string,
+  url: string,
+  record: ExternalCallRecord,
+): Promise<Response> {
+  const prefix = REQUEST_FAILED_PREFIX[service];
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "sonora/0.1",
+      },
+      signal: AbortSignal.timeout(externalFetchTimeoutMs()),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = (error as { code?: unknown } | null)?.code;
+    throw new ExternalRequestError(`${prefix}: ${message}`, {
+      service,
+      host,
+      url,
+      code:
+        typeof code === "string" || typeof code === "number" ? code : undefined,
+      cause: error,
+    });
+  }
+
+  record.status = res.status;
+  if (!res.ok) {
+    throw new ExternalRequestError(`${prefix}: ${res.status}`, {
+      service,
+      host,
+      url,
+      status: res.status,
+    });
+  }
+
+  return res;
+}
 
 type ParsedYTMetadata = {
   artists: string[];
@@ -124,13 +219,24 @@ export function parseYouTubeUrl(
 }
 
 /* YT METADATA */
-export async function fetchYtMetadata(url: string) {
-  const metadata = await $`yt-dlp --dump-json ${url}`.text();
+export async function fetchYtMetadata(
+  url: string,
+  context: Partial<IngestLogContext> = {},
+) {
+  const metadata = await logExternalCall(
+    { service: "yt_dlp_metadata", ...context },
+    async () =>
+      parseJson(
+        await $`yt-dlp --dump-json ${url}`.text(),
+        "yt-dlp --dump-json",
+      ),
+  );
   return parseYtDlpMetadata(metadata);
 }
 
-export function parseYtDlpMetadata(metadata: string): ParsedYTMetadata {
-  const parsedMetadata = JSON.parse(metadata);
+export function parseYtDlpMetadata(
+  parsedMetadata: Record<string, any>,
+): ParsedYTMetadata {
   const noiseRegex =
     /\((official.*?|lyrics?|audio|video|visualizer|hd|4k|remaster(ed)?|live.*?)\)|\[(official.*?|lyrics?|audio|video|hd.*?)\]/gi;
 
@@ -199,11 +305,14 @@ function splitArtists(input: string): string[] {
 
 /* MUSICBRAINZ METADATA */
 // TODO: standardize return type for musicbrainz metadata
-export async function fetchMusicBrainzMetadata(metadata: {
-  artists: string[];
-  album: string | null;
-  track: string | null;
-}) {
+export async function fetchMusicBrainzMetadata(
+  metadata: {
+    artists: string[];
+    album: string | null;
+    track: string | null;
+  },
+  context: Partial<IngestLogContext> = {},
+) {
   // build query
   let query = "";
 
@@ -222,22 +331,16 @@ export async function fetchMusicBrainzMetadata(metadata: {
   console.log("Sending query to MusicBrainz:", urlParam);
 
   // Query MusicBrainz
-  const res = await fetch(
-    `https://musicbrainz.org/ws/2/recording?query=${urlParam}&fmt=json`,
-    {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "sonora/0.1",
-      },
+  const host = "musicbrainz.org";
+  const url = `https://${host}/ws/2/recording?query=${urlParam}&fmt=json`;
+  return logExternalCall(
+    { service: "musicbrainz", host, ...context },
+    async (record) => {
+      const res = await fetchExternal("musicbrainz", host, url, record);
+      const data = parseJson(await res.text(), "MusicBrainz");
+      return data;
     },
   );
-
-  if (!res.ok) {
-    throw new Error(`Request failed: ${res.status}`);
-  }
-
-  const data = await res.json();
-  return data;
 }
 
 /* FALLBACK RECORDING if musicbrainz recording is malformed or incomplete */
@@ -295,30 +398,35 @@ export function findFirstCompleteRelease(recording: any) {
   return release;
 }
 
-async function getCoverArtForRelease(release: any) {
-  const res = await fetch(
-    `https://coverartarchive.org/release-group/${release["release-group"].id}`,
-    {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "sonora/0.1",
-      },
+async function getCoverArtForRelease(
+  release: any,
+  context: Partial<IngestLogContext> = {},
+) {
+  const host = "coverartarchive.org";
+  const url = `https://${host}/release-group/${release["release-group"].id}`;
+  return logExternalCall(
+    { service: "cover_art", host, ...context },
+    async (record) => {
+      const res = await fetchExternal("cover_art", host, url, record);
+      const data = parseJson(await res.text(), "Cover Art Archive");
+      release["release-group"].cover_art_url = data.images[0].image;
+      release["release-group"].cover_art_url_thumbnail_large =
+        data.images[0].thumbnails.large;
+      release["release-group"].cover_art_url_thumbnail_small =
+        data.images[0].thumbnails.small;
+
+      return release;
     },
   );
-
-  if (!res.ok) {
-    throw new Error(`Cover Art Archive request failed: ${res.status}`);
-  }
-
-  const data = await res.json();
-  release["release-group"].cover_art_url = data.images[0].image;
-  release["release-group"].cover_art_url_thumbnail_large =
-    data.images[0].thumbnails.large;
-  release["release-group"].cover_art_url_thumbnail_small =
-    data.images[0].thumbnails.small;
-
-  return release;
 }
+
+export type ReleaseDateSelection = {
+  releaseDateSource:
+    "musicbrainz_release" | "placeholder" | "upload_date" | "today";
+  recordingDateSource:
+    "musicbrainz_recording" | "missing" | "upload_date" | "today";
+  usedPlaceholderRelease: boolean;
+};
 
 export async function extractRecordingAndRelease(
   musicbrainzmetadata: any,
@@ -327,15 +435,24 @@ export async function extractRecordingAndRelease(
 ) {
   let recording = musicbrainzmetadata.recordings?.[0];
   let release;
+  let releaseCount: number | undefined;
+  let releaseDateSource: ReleaseDateSelection["releaseDateSource"];
+  let recordingDateSource: ReleaseDateSelection["recordingDateSource"];
+  let usedPlaceholderRelease = false;
 
   if (recording) {
+    releaseCount = recording.releases?.length ?? 0;
+
     // select a release from all releases in recording
     try {
       release = findFirstCompleteRelease(recording);
+      releaseDateSource = "musicbrainz_release";
     } catch (error) {
       await logIngestWarning("musicbrainz_release_incomplete", error, {
         ...context,
         stage: "release_selection",
+        releaseCount,
+        recordingId: recording.id ?? null,
       });
       release = {
         date: 0,
@@ -345,15 +462,25 @@ export async function extractRecordingAndRelease(
           id: null,
         },
       };
+      releaseDateSource = "placeholder";
+      usedPlaceholderRelease = true;
     }
+
+    const recordingFirstRelease = recording["first-release-date"];
+    recordingDateSource =
+      recordingFirstRelease != null && recordingFirstRelease !== ""
+        ? "musicbrainz_recording"
+        : "missing";
 
     if (release["release-group"].id) {
       try {
-        release = await getCoverArtForRelease(release);
+        release = await getCoverArtForRelease(release, context);
       } catch (error) {
         await logIngestWarning("cover_art_lookup_failed", error, {
           ...context,
           stage: "cover_art_lookup",
+          releaseGroupId: release["release-group"].id,
+          ...errorKindFields(error),
         });
       }
     }
@@ -366,9 +493,31 @@ export async function extractRecordingAndRelease(
     });
     recording = createFallbackRecording(ytMetadata);
     release = recording.release;
+    // Same truthiness test createFallbackRecording uses for `upload_date || today`.
+    releaseDateSource = ytMetadata.upload_date ? "upload_date" : "today";
+    recordingDateSource = releaseDateSource;
   }
 
-  return [recording, release];
+  const selection: ReleaseDateSelection = {
+    releaseDateSource,
+    recordingDateSource,
+    usedPlaceholderRelease,
+  };
+
+  await logIngestInfo("release_date_selected", {
+    ...context,
+    stage: "metadata_reconciliation",
+    releaseDateSource,
+    recordingDateSource,
+    releaseDate: describeDateValue(release.date),
+    recordingFirstReleaseDate: describeDateValue(
+      recording["first-release-date"],
+    ),
+    usedPlaceholderRelease,
+    ...(releaseCount === undefined ? {} : { releaseCount }),
+  });
+
+  return [recording, release, selection] as const;
 }
 
 // GET AUDIO LENGTH from m4a if musicbrainz and youtube don't provide it
