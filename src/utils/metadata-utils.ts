@@ -85,7 +85,7 @@ async function fetchExternal(
     res = await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "sonora/0.1",
+        "User-Agent": "sonora/0.1 (https://github.com/akashamba/sonora)",
       },
       signal: AbortSignal.timeout(externalFetchTimeoutMs()),
     });
@@ -436,6 +436,55 @@ async function saveMusicBrainzErrorResponse(
   }
 }
 
+// MusicBrainz asks clients for at most one request per second. Each caller
+// reserves its slot before sending, so concurrent ingests queue behind each other.
+const DEFAULT_MUSICBRAINZ_MIN_INTERVAL_MS = 1500;
+let musicBrainzNextSlotAt = 0;
+
+// Read at call time so tests can turn pacing off.
+function musicBrainzMinIntervalMs(): number {
+  const configured = process.env.MUSICBRAINZ_MIN_INTERVAL_MS;
+  if (configured === undefined) return DEFAULT_MUSICBRAINZ_MIN_INTERVAL_MS;
+  const parsed = Number(configured);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_MUSICBRAINZ_MIN_INTERVAL_MS;
+}
+
+async function waitForMusicBrainzSlot() {
+  const now = Date.now();
+  const slotAt = Math.max(now, musicBrainzNextSlotAt);
+  musicBrainzNextSlotAt = slotAt + musicBrainzMinIntervalMs();
+  if (slotAt > now) await Bun.sleep(slotAt - now);
+}
+
+// Only transient failures are retried: busy or rate limited responses, timeouts,
+// and other 5xx responses. Other failures fail on the first attempt.
+const MUSICBRAINZ_MAX_ATTEMPTS = 4;
+const DEFAULT_MUSICBRAINZ_BACKOFF_BASE_MS = 2000;
+const MUSICBRAINZ_BACKOFF_CAP_MS = 30000;
+
+// Read at call time so tests can shorten the base delay.
+function musicBrainzBackoffMs(attempt: number): number {
+  const base =
+    Number(process.env.MUSICBRAINZ_BACKOFF_BASE_MS) ||
+    DEFAULT_MUSICBRAINZ_BACKOFF_BASE_MS;
+  const exponential = Math.min(
+    MUSICBRAINZ_BACKOFF_CAP_MS,
+    base * 2 ** (attempt - 1),
+  );
+  return exponential + Math.random() * 500;
+}
+
+function isRetryableMusicBrainzError(error: unknown): boolean {
+  const { errorKind } = errorKindFields(error);
+  return (
+    errorKind === "timeout" ||
+    errorKind === "http_429" ||
+    errorKind === "http_5xx"
+  );
+}
+
 export async function fetchMusicBrainzMetadata(
   metadata: {
     artists: string[];
@@ -474,33 +523,54 @@ export async function fetchMusicBrainzMetadata(
   // Query MusicBrainz
   const host = "musicbrainz.org";
   const url = `https://${host}/ws/2/recording?query=${urlParam}&fmt=json`;
-  // No retry loop here, so every MusicBrainz call is attempt 1.
-  // The error-body path adds fields to callFields before the call rejects;
-  // logExternalCall spreads them into external_call_finished when it logs.
-  const callFields: Record<string, unknown> = {
-    service: "musicbrainz",
-    host,
-    url,
-    attempt: 1,
-    ...lookup,
-  };
-  return logExternalCall(callFields, async (record) => {
-    const res = await fetchExternal(
-      "musicbrainz",
+  // Each attempt waits for its own slot and writes its own external_call_finished
+  // record. The error-body path adds fields to callFields before the call rejects;
+  // logExternalCall spreads them into that record.
+  for (let attempt = 1; ; attempt++) {
+    const callFields: Record<string, unknown> = {
+      service: "musicbrainz",
       host,
       url,
-      record,
-      async (errorRes) => {
-        Object.assign(
-          callFields,
-          await saveMusicBrainzErrorResponse(lookup, errorRes),
+      attempt,
+      ...lookup,
+    };
+    await waitForMusicBrainzSlot();
+    try {
+      return await logExternalCall(callFields, async (record) => {
+        const res = await fetchExternal(
+          "musicbrainz",
+          host,
+          url,
+          record,
+          async (errorRes) => {
+            Object.assign(
+              callFields,
+              await saveMusicBrainzErrorResponse(lookup, errorRes),
+            );
+          },
         );
-      },
-    );
-    const body = await res.text();
-    await saveMusicBrainzResponse(lookup, body);
-    return parseJson(body, "MusicBrainz");
-  });
+        const body = await res.text();
+        await saveMusicBrainzResponse(lookup, body);
+        return parseJson(body, "MusicBrainz");
+      });
+    } catch (error) {
+      if (
+        attempt >= MUSICBRAINZ_MAX_ATTEMPTS ||
+        !isRetryableMusicBrainzError(error)
+      ) {
+        throw error;
+      }
+      const delayMs = musicBrainzBackoffMs(attempt);
+      await logIngestWarning("musicbrainz_retry_scheduled", error, {
+        ...lookup,
+        attempt,
+        nextAttempt: attempt + 1,
+        delayMs: Math.round(delayMs),
+        ...errorKindFields(error),
+      });
+      await Bun.sleep(delayMs);
+    }
+  }
 }
 
 /* FALLBACK RECORDING if musicbrainz recording is malformed or incomplete */

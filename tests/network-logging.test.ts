@@ -75,7 +75,8 @@ describe("MusicBrainz external calls", () => {
     const refused: any = await fetchMusicBrainzMetadata({ artists: [], album: null, track: "x" }).catch((e) => e);
     expect(refused).toMatchObject({ service: "musicbrainz", code: "ConnectionRefused" }); expect(refused.status).toBeUndefined(); expect(refused.cause).toBeInstanceOf(TypeError);
     calls = (await records()).filter((r) => r.service === "musicbrainz");
-    expect(calls).toHaveLength(3); expect(calls.slice(1).map((r) => [r.outcome, r.status, r.errorKind])).toEqual([["error", 503, "http_5xx"], ["error", undefined, "unreachable"]]);
+    // The 503 is retried up to four attempts; the refused fetch is not retried.
+    expect(calls).toHaveLength(6); expect(calls.slice(1).map((r) => [r.outcome, r.status, r.errorKind])).toEqual([["error", 503, "http_5xx"], ["error", 503, "http_5xx"], ["error", 503, "http_5xx"], ["error", 503, "http_5xx"], ["error", undefined, "unreachable"]]);
   });
 
   test("timeout is read per call and default timeout permits a fast response", async () => {
@@ -93,7 +94,8 @@ describe("MusicBrainz external calls", () => {
     })) as unknown as typeof fetch;
     await expect(fetchMusicBrainzMetadata({ artists: [], album: null, track: "x" })).resolves.toEqual({ recordings: [] });
     const calls = (await records()).filter((r) => r.service === "musicbrainz");
-    expect(calls.map((r) => [r.outcome, r.errorKind])).toEqual([["error", "timeout"], ["ok", undefined], ["ok", undefined]]);
+    // A timeout is retried, so the first lookup uses all four attempts.
+    expect(calls.map((r) => [r.outcome, r.errorKind])).toEqual([["error", "timeout"], ["error", "timeout"], ["error", "timeout"], ["error", "timeout"], ["ok", undefined], ["ok", undefined]]);
   });
 });
 
