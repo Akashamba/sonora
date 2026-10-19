@@ -1,5 +1,6 @@
 // TODO: Group all unknown album songs under the same album, same for artists, not for unknown name
 
+import { queryTrackByYoutubeId } from "~/server/db/queries/queryTrackByYoutubeId";
 import { queryMatches } from "~/server/db/queries/queryTrackMatches";
 import { queryTracksByFilePath } from "~/server/db/queries/queryTracksByFilePath";
 import { addNewTrack } from "~/server/db/transactions/addNewTrack";
@@ -51,9 +52,10 @@ export async function logAudioPathState(
 export type IngestProgress = { trackCommitted?: boolean };
 
 // for a given url:
+// - skip if the youtube id is already in db
 // - fetch metadata from youtube
 // - Looks up high quality metadata from musicbrainz. use fallback data if not available
-// - check if already in db, if not download
+// - check if the recording is already in db, if not download
 // - write to db
 // `timing.queuedForMs` is the wait between the job's creation and its claim. The
 // caller measures it, since only the worker knows when the job was claimed.
@@ -97,6 +99,23 @@ export async function ingestTrack(
     const [parsedYoutubeId, youtubeUrl] = parseYouTubeUrl(url);
     youtubeId = parsedYoutubeId;
     await completeStage({ youtubeId });
+
+    // Skip a YouTube id that is already stored, before any network call
+    await beginStage("youtube_id_check");
+    const existing = await queryTrackByYoutubeId(youtubeId);
+    if (existing.length > 0) {
+      await completeStage({ duplicate: true, matchCount: existing.length });
+      await logIngestInfo("ingest_skipped_duplicate", {
+        ...context(),
+        matchCount: existing.length,
+        matchedBy: ["youtube_id"],
+        matchedTrackIds: existing.map((track) => track.id),
+        totalDurationMs: Math.round(performance.now() - ingestStartedAt),
+        queuedForMs: timing.queuedForMs,
+      });
+      return;
+    }
+    await completeStage({ duplicate: false });
 
     // Get metadata from YouTube
     await beginStage("youtube_metadata");

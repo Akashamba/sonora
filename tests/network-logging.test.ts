@@ -129,7 +129,11 @@ describe("yt-dlp and ingest failures", () => {
   test("metadata failure gives DNS ingest_failed; invalid URL is unclassified and has no external call", async () => {
     await fakeYtDlp("echo \"ERROR: Failed to resolve host\" >&2; exit 1");
     const { ingestTrack } = await import("../src/services/ingestTrack");
-    await expect(ingestTrack("https://www.youtube.com/watch?v=abcdefghijk", "dns-job")).rejects.toThrow();
+    // ingestTrack looks up the YouTube id first, so the test DB needs a tracks table. The id is
+    // one no other test stores, since test files can share the DB module.
+    const { db } = await import("../src/server/db"); const { sql } = await import("drizzle-orm");
+    db.run(sql`CREATE TABLE IF NOT EXISTS tracks_table (id TEXT PRIMARY KEY, youtube_id TEXT NOT NULL UNIQUE)`);
+    await expect(ingestTrack("https://www.youtube.com/watch?v=dnsfailure1", "dns-job")).rejects.toThrow();
     await expect(ingestTrack("not youtube", "bad-job")).rejects.toThrow();
     const rs = await records(); const failed = rs.filter((r) => r.event === "ingest_failed");
     expect(failed).toHaveLength(2); expect(failed.map((r) => r.errorKind)).toEqual(["dns", undefined]); expect(Object.hasOwn(failed[1], "errorKind")).toBe(false);

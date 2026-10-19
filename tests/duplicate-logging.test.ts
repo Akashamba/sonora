@@ -41,7 +41,8 @@ afterEach(async () => {
 describe("duplicate detection logging", () => {
   test("the matched keys reach the jsonl file", async () => {
     // Runs in a child process with its own DB_FILE_NAME, as in download-file-logging.test.ts.
-    // The stored track shares both keys with the first upload and only the recording id with the second.
+    // The first upload reuses the stored YouTube id and is skipped by the early check. The second has
+    // a new YouTube id and is skipped after MusicBrainz returns the stored recording id.
     await fakeYtDlp(`cat <<'EOF'\n{"title":"Artist - Song","upload_date":"20200102"}\nEOF`);
     const databasePath = join(tempDir, "test.sqlite");
     const probe = join(tempDir, "probe.ts");
@@ -101,23 +102,25 @@ await ingestTrack("https://youtube.com/watch?v=lmnopqrstuv", "job-recording");
       level: "info",
       jobId: "job-both",
       youtubeId: "abcdefghijk",
+      stage: "youtube_id_check",
       matchCount: 1,
-      matchedBy: ["youtube_id", "recording_id"],
+      matchedBy: ["youtube_id"],
       matchedTrackIds: ["track-owner"],
     });
     expect(skipped[1]).toMatchObject({
       jobId: "job-recording",
       youtubeId: "lmnopqrstuv",
+      stage: "duplicate_check",
       matchCount: 1,
       matchedBy: ["recording_id"],
       matchedTrackIds: ["track-owner"],
     });
   });
 
-  test("a duplicate matched only by youtube_id logs matchedBy youtube_id alone and still queries MusicBrainz", async () => {
-    // The stored track has recording id rec-dup. The second upload reuses its YouTube id, and
-    // MusicBrainz returns a different recording id, so only the youtube_id key matches.
-    await fakeYtDlp(`cat <<'EOF'\n{"title":"Artist - Song","upload_date":"20200102"}\nEOF`);
+  test("a stored YouTube id is skipped before any yt-dlp or MusicBrainz call", async () => {
+    // yt-dlp leaves a marker and fetch throws, so either call would show up.
+    const ytDlpMarker = join(tempDir, "yt-dlp-called");
+    await fakeYtDlp(`touch ${ytDlpMarker}; cat <<'EOF'\n{"title":"Artist - Song","upload_date":"20200102"}\nEOF`);
     const databasePath = join(tempDir, "test.sqlite");
     const probe = join(tempDir, "probe.ts");
     const ingestTrackModule = join(process.cwd(), "src/services/ingestTrack.ts");
@@ -150,11 +153,9 @@ await db.insert(tracks).values({
   length: 1000,
   file_path: "audio/Song.m4a",
 });
-globalThis.fetch = (async () =>
-  new Response(JSON.stringify({ count: 1, recordings: [{ id: "rec-other", score: "92", title: "Song" }] }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  })) as unknown as typeof fetch;
+globalThis.fetch = (async () => {
+  throw new Error("fetch should not be called");
+}) as unknown as typeof fetch;
 await ingestTrack("https://youtube.com/watch?v=abcdefghijk", "job-youtube-only");
 `,
     );
@@ -171,8 +172,9 @@ await ingestTrack("https://youtube.com/watch?v=abcdefghijk", "job-youtube-only")
     const all = await records();
     const forJob = all.filter((r) => r.jobId === "job-youtube-only");
 
-    // MusicBrainz is queried even though the YouTube id is already stored.
-    expect(forJob.filter((r) => r.event === "musicbrainz_query_sent")).toHaveLength(1);
+    expect(await Bun.file(ytDlpMarker).exists()).toBe(false);
+    expect(forJob.filter((r) => r.event === "external_call_finished")).toHaveLength(0);
+    expect(forJob.filter((r) => r.event === "musicbrainz_query_sent")).toHaveLength(0);
 
     const skipped = forJob.filter((r) => r.event === "ingest_skipped_duplicate");
     expect(skipped).toHaveLength(1);
@@ -180,6 +182,7 @@ await ingestTrack("https://youtube.com/watch?v=abcdefghijk", "job-youtube-only")
       level: "info",
       jobId: "job-youtube-only",
       youtubeId: "abcdefghijk",
+      stage: "youtube_id_check",
       matchCount: 1,
       matchedBy: ["youtube_id"],
       matchedTrackIds: ["track-owner"],
