@@ -241,7 +241,7 @@ await db.run(sql\`CREATE TABLE track_artists (track_id text, artist_id text, pos
 await addNewTrack({
   release: { date: "2020-05-01", "release-group": { id: "rg-committed", "primary-type": "Album", title: "Album" } },
   youtubeId: "yt-committed",
-  filePath: "audio/Song.m4a",
+  filePath: "audio/Song.opus",
   recording: { id: "rec-committed", title: "Song", "first-release-date": "2019", length: 123, "artist-credit": [{ name: "Artist", joinphrase: "", artist: { id: "artist-committed", name: "Artist" } }] },
 }, { jobId: "commit-job", musicbrainzLookupId: "lookup-commit", musicbrainzResponseFile: "musicbrainz/lookup-commit.json" });
 `,

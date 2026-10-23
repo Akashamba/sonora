@@ -29,7 +29,7 @@ The streaming endpoint and the scanner are the two things worth getting right ea
 - [x] create db object
 - [ ] set up pipeline to download a song and add a record to db
 
-# Pipeline of fetching m4a from youtube to writing to db for a given youtube URL
+# Pipeline of fetching opus audio from youtube to writing to db for a given youtube URL
 
 - extract and store youtube video ID and original url (primary dedup key to avoid redownloading a song again)
 - fetch metadata first before downloading audio
@@ -46,10 +46,10 @@ yt-dlp --dump-json <url>
 - download audio
 
 ```sh
-yt-dlp -f ba --extract-audio --audio-format m4a --embed-metadata --embed-thumbnail
+yt-dlp -f "bestaudio[acodec=opus]/bestaudio" --extract-audio --audio-format opus --embed-metadata
 ```
 
-- Store as: audio/youtube/{youtube_id}.m4a (scale to other sources down the line)
+- Store as: audio/youtube/{youtube_id}.opus (scale to other sources down the line)
 - Insert record of new song (and album, artist if applicable) into db
 
 # DB Schema

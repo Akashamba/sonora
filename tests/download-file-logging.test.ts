@@ -42,8 +42,8 @@ describe("audio download success", () => {
   test("a download that recovered on retry logs audio_download_succeeded with its attempt count", async () => {
     const counter = join(tempDir, "count");
     await fakeYtDlp(`if [ ! -f '${counter}' ]; then touch '${counter}'; echo 'ERROR: Failed to resolve host' >&2; exit 1; fi\nexit 0`);
-    const { downloadWithRetry } = await import("../src/utils/fetchM4a");
-    const filePath = join(tempDir, "recovered.m4a");
+    const { downloadWithRetry } = await import("../src/utils/fetchAudio");
+    const filePath = join(tempDir, "recovered.opus");
 
     await expect(
       downloadWithRetry("https://youtube.com/watch?v=abcdefghijk", filePath, { jobId: "job-retry", youtubeId: "yt-retry" }, 3),
@@ -63,8 +63,8 @@ describe("audio download success", () => {
 
   test("a first-attempt download logs downloadAttempts 1", async () => {
     await fakeYtDlp("exit 0");
-    const { downloadWithRetry } = await import("../src/utils/fetchM4a");
-    const filePath = join(tempDir, "first.m4a");
+    const { downloadWithRetry } = await import("../src/utils/fetchAudio");
+    const filePath = join(tempDir, "first.opus");
 
     await expect(
       downloadWithRetry("https://youtube.com/watch?v=abcdefghijk", filePath, { jobId: "job-first", youtubeId: "yt-first" }),
@@ -82,7 +82,7 @@ describe("audio path state before download", () => {
     // per process, and Bun loads .env (the real tracks.sqlite) at startup, so this
     // test must not load src/server/db in the test process.
     const databasePath = join(tempDir, "test.sqlite");
-    const filePath = join(tempDir, "audio", "Same_Title.m4a");
+    const filePath = join(tempDir, "audio", "Same_Title.opus");
     const probe = join(tempDir, "probe.ts");
     const ingestTrackModule = join(process.cwd(), "src/services/ingestTrack.ts");
     const dbModule = join(process.cwd(), "src/server/db/index.ts");

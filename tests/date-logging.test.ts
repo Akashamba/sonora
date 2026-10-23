@@ -97,7 +97,7 @@ describe("database transaction failure logging", () => {
     sql.exec("DROP TABLE IF EXISTS track_artists; DROP TABLE IF EXISTS tracks_table; DROP TABLE IF EXISTS artists_table; DROP TABLE IF EXISTS release_groups_table; CREATE TABLE release_groups_table (id TEXT PRIMARY KEY, musicbrainz_release_group_id TEXT UNIQUE, musicbrainz_primary_type TEXT NOT NULL, title TEXT NOT NULL, cover_art_url TEXT, first_release_date INTEGER NOT NULL, cover_art_url_thumbnail_large TEXT, cover_art_url_thumbnail_small TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); CREATE TABLE tracks_table (id TEXT PRIMARY KEY, youtube_id TEXT NOT NULL UNIQUE, musicbrainz_recording_id TEXT UNIQUE, release_group_id TEXT, title TEXT NOT NULL, first_release_date INTEGER NOT NULL, length INTEGER NOT NULL, file_path TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); CREATE TABLE artists_table (id TEXT PRIMARY KEY, musicbrainz_id TEXT UNIQUE, name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); CREATE TABLE track_artists (track_id TEXT, artist_id TEXT, pos INTEGER NOT NULL, joinphrase TEXT);"); sql.close();
   }
   async function add(info: Record<string, any>) { const { addNewTrack } = await import("../src/server/db/transactions/addNewTrack"); return addNewTrack(info as any, { jobId: "db-job" }); }
-  function valid(youtubeId: string) { return { youtubeId, filePath: "audio/x.m4a", release: release("2020-05-01", `rg-${youtubeId}`), recording: recording({ id: `rec-${youtubeId}`, releases: undefined }) }; }
+  function valid(youtubeId: string) { return { youtubeId, filePath: "audio/x.opus", release: release("2020-05-01", `rg-${youtubeId}`), recording: recording({ id: `rec-${youtubeId}`, releases: undefined }) }; }
   test("logs date descriptions for NOT NULL, invalid empty release date, valid-date conflict, and no record on success", async () => {
     createTables(); const noRecordingDate = valid("not-null"); (noRecordingDate.recording as any)["first-release-date"] = undefined;
     await expect(add(noRecordingDate)).rejects.toThrow(); let failures = (await records()).filter((r) => r.event === "database_transaction_failed");
@@ -109,7 +109,7 @@ describe("database transaction failure logging", () => {
     expect(failures).toHaveLength(before + 1); expect(failures.at(-1)).toMatchObject({ recordingFirstReleaseDate: { parsesAsDate: true }, releaseDate: { parsesAsDate: true } });
     const { extractRecordingAndRelease } = await import("../src/utils/metadata-utils");
     const [placeholderRecording, placeholderRelease] = await extractRecordingAndRelease({ recordings: [recording({ releases: [] })] }, yt as any, { jobId: "db-job", youtubeId: "placeholder-store" });
-    await expect(add({ youtubeId: "placeholder-store", filePath: "audio/placeholder.m4a", release: placeholderRelease, recording: placeholderRecording })).resolves.toBeUndefined();
+    await expect(add({ youtubeId: "placeholder-store", filePath: "audio/placeholder.opus", release: placeholderRelease, recording: placeholderRecording })).resolves.toBeUndefined();
     const sql = new Database(databasePath); expect(sql.query("SELECT first_release_date FROM release_groups_table WHERE title = 'Unknown Album'").get()).toMatchObject({ first_release_date: 0 }); sql.close();
   });
 });

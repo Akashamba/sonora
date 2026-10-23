@@ -40,7 +40,7 @@ describe("route database failures", () => {
     // exists, so every route that touches another table fails with a SQLite error.
     const { Database } = await import("bun:sqlite");
     const databasePath = join(tempDir, "test.sqlite");
-    const audioPath = join(tempDir, "track.m4a");
+    const audioPath = join(tempDir, "track.opus");
     await writeFile(audioPath, "audio");
     const setup = new Database(databasePath);
     setup.run(`CREATE TABLE tracks_table (

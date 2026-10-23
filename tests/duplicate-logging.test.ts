@@ -74,7 +74,7 @@ await db.insert(tracks).values({
   title: "Song",
   first_release_date: new Date("2020-01-01"),
   length: 1000,
-  file_path: "audio/Song.m4a",
+  file_path: "audio/Song.opus",
 });
 globalThis.fetch = (async () =>
   new Response(JSON.stringify({ count: 1, recordings: [{ id: "rec-dup", score: "92", title: "Song", "artist-credit": [{ name: "Artist" }] }] }), {
@@ -151,7 +151,7 @@ await db.insert(tracks).values({
   title: "Song",
   first_release_date: new Date("2020-01-01"),
   length: 1000,
-  file_path: "audio/Song.m4a",
+  file_path: "audio/Song.opus",
 });
 globalThis.fetch = (async () => {
   throw new Error("fetch should not be called");

@@ -858,7 +858,7 @@ export async function extractRecordingAndRelease(
   return [recording, release, selection] as const;
 }
 
-// GET AUDIO LENGTH from m4a if musicbrainz and youtube don't provide it
+// GET AUDIO LENGTH from the downloaded file if musicbrainz and youtube don't provide it
 export async function getAudioLengthMs(filePath: string): Promise<number> {
   const result =
     await $`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${filePath}`.text();

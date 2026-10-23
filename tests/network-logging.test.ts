@@ -145,9 +145,9 @@ describe("yt-dlp and ingest failures", () => {
   test("download failed then success emits two timings and one classified warning; non-network failure has no kind", async () => {
     const counter = join(tempDir, "count");
     await fakeYtDlp(`if [ \"$1\" = \"--dump-json\" ]; then echo '{"title":"A - T","upload_date":"20200101"}'; exit 0; fi\nif [ ! -f '${counter}' ]; then touch '${counter}'; echo 'ERROR: Failed to resolve host' >&2; exit 1; fi\nexit 0`);
-    const { fetchYtMetadata } = await import("../src/utils/metadata-utils"); const { downloadWithRetry } = await import("../src/utils/fetchM4a");
+    const { fetchYtMetadata } = await import("../src/utils/metadata-utils"); const { downloadWithRetry } = await import("../src/utils/fetchAudio");
     await fetchYtMetadata("https://youtube.com/watch?v=abcdefghijk", { jobId: "m", youtubeId: "y" });
-    await expect(downloadWithRetry("https://youtube.com/watch?v=abcdefghijk", join(tempDir, "x.m4a"), { jobId: "d", youtubeId: "y" }, 2)).resolves.toBe(2);
+    await expect(downloadWithRetry("https://youtube.com/watch?v=abcdefghijk", join(tempDir, "x.opus"), { jobId: "d", youtubeId: "y" }, 2)).resolves.toBe(2);
     const rs = await records(); const downloads = rs.filter((r) => r.service === "yt_dlp_download"); const warns = rs.filter((r) => r.event === "audio_download_attempt_failed");
     expect(downloads).toHaveLength(2); expect(downloads.map((r) => [r.attempt, r.outcome, r.errorKind])).toEqual([[1, "error", "dns"], [2, "ok", undefined]]); expect(warns).toHaveLength(1); expect(warns[0].errorKind).toBe("dns");
     await fakeYtDlp("echo 'ERROR: unsupported format' >&2; exit 1");
@@ -166,7 +166,7 @@ describe("yt-dlp and ingest failures", () => {
     let timing = (await records()).find((r) => r.service === "yt_dlp_metadata");
     expect(timing).toMatchObject({ outcome: "error", errorKind: "malformed_json", jobId: "badjson" });
     await fakeYtDlp("echo 'ERROR: HTTP Error 503' >&2; exit 1");
-    const { downloadWithRetry } = await import("../src/utils/fetchM4a");
+    const { downloadWithRetry } = await import("../src/utils/fetchAudio");
     await expect(downloadWithRetry("u", "f", { jobId: "503", youtubeId: "y" }, 1)).rejects.toThrow();
     timing = (await records()).filter((r) => r.service === "yt_dlp_download").at(-1)!;
     expect(timing).toMatchObject({ outcome: "error", jobId: "503" }); expect(Object.hasOwn(timing, "errorKind")).toBe(false);
