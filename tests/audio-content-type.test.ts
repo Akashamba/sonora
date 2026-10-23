@@ -13,7 +13,9 @@ describe("audioContentType", () => {
 
   test("ignores extension case and falls back to octet-stream", () => {
     expect(audioContentType("audio/Song.OPUS")).toBe("audio/ogg; codecs=opus");
-    expect(audioContentType("audio/Song.flac")).toBe("application/octet-stream");
+    expect(audioContentType("audio/Song.flac")).toBe(
+      "application/octet-stream",
+    );
     expect(audioContentType("audio/Song")).toBe("application/octet-stream");
   });
 });

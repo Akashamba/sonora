@@ -11,5 +11,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 export function audioContentType(filePath: string): string {
-  return CONTENT_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+  return (
+    CONTENT_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream"
+  );
 }

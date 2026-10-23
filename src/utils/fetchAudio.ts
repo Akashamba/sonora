@@ -17,7 +17,10 @@ export function opusFilePath(filePath: string): string {
   return filePath.replace(KNOWN_AUDIO_EXTENSION, "") + AUDIO_EXTENSION;
 }
 
-export function ytDlpDownloadArgs(youtubeUrl: string, filePath: string): string[] {
+export function ytDlpDownloadArgs(
+  youtubeUrl: string,
+  filePath: string,
+): string[] {
   const stem = opusFilePath(filePath).slice(0, -AUDIO_EXTENSION.length);
   // yt-dlp reads % as template syntax, so a literal percent sign is doubled.
   const template = `${stem.replaceAll("%", "%%")}.%(ext)s`;

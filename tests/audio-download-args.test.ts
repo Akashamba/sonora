@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,7 +36,9 @@ describe("opusFilePath", () => {
     const { opusFilePath } = await import("../src/utils/fetchAudio");
     expect(opusFilePath("audio/Song.opus")).toBe("audio/Song.opus");
     expect(opusFilePath("audio/Song.m4a")).toBe("audio/Song.opus");
-    expect(opusFilePath("audio/Mr._Brightside")).toBe("audio/Mr._Brightside.opus");
+    expect(opusFilePath("audio/Mr._Brightside")).toBe(
+      "audio/Mr._Brightside.opus",
+    );
     expect(opusFilePath("audio/Vol.2")).toBe("audio/Vol.2.opus");
   });
 
@@ -42,10 +51,15 @@ describe("opusFilePath", () => {
 describe("ytDlpDownloadArgs", () => {
   test("selects the Opus stream, extracts to Opus, and skips thumbnail embedding", async () => {
     const { ytDlpDownloadArgs } = await import("../src/utils/fetchAudio");
-    const args = ytDlpDownloadArgs("https://youtube.com/watch?v=abcdefghijk", "audio/Song.opus");
+    const args = ytDlpDownloadArgs(
+      "https://youtube.com/watch?v=abcdefghijk",
+      "audio/Song.opus",
+    );
 
     expect(args[0]).toBe("yt-dlp");
-    expect(args[args.indexOf("-f") + 1]).toBe("bestaudio[acodec=opus]/bestaudio");
+    expect(args[args.indexOf("-f") + 1]).toBe(
+      "bestaudio[acodec=opus]/bestaudio",
+    );
     expect(args[args.indexOf("--audio-format") + 1]).toBe("opus");
     expect(args).toContain("--extract-audio");
     expect(args).toContain("--embed-metadata");
@@ -72,13 +86,21 @@ describe("downloadWithRetry", () => {
   test("runs yt-dlp with exactly the computed arguments and logs the .opus path", async () => {
     const argv = join(tempDir, "argv.txt");
     await fakeYtDlp(`printf '%s\\n' "$@" > '${argv}'`);
-    const { downloadWithRetry, ytDlpDownloadArgs } = await import("../src/utils/fetchAudio");
+    const { downloadWithRetry, ytDlpDownloadArgs } =
+      await import("../src/utils/fetchAudio");
     const url = "https://youtube.com/watch?v=abcdefghijk";
     const filePath = join(tempDir, "audio", "Song.opus");
 
-    await expect(downloadWithRetry(url, filePath, { jobId: "job-args", youtubeId: "yt-args" })).resolves.toBe(1);
+    await expect(
+      downloadWithRetry(url, filePath, {
+        jobId: "job-args",
+        youtubeId: "yt-args",
+      }),
+    ).resolves.toBe(1);
 
-    const received = (await readFile(argv, "utf8")).split("\n").filter((line) => line !== "");
+    const received = (await readFile(argv, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "");
     expect(received).toEqual(ytDlpDownloadArgs(url, filePath).slice(1));
     const template = received[received.indexOf("-o") + 1];
     expect(template).toBe(join(tempDir, "audio", "Song.%(ext)s"));
