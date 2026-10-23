@@ -329,7 +329,7 @@ export function parseYtDlpMetadata(
 
 function splitArtists(input: string): string[] {
   return input
-    .split(/\s+(?:&|x|feat\.?|ft\.?|with|and)\s+/i)
+    .split(/\s*,\s*|\s+(?:&|x|feat\.?|ft\.?|with|and)\s+/i)
     .map((a) => a.trim())
     .filter(Boolean);
 }
@@ -485,39 +485,85 @@ function isRetryableMusicBrainzError(error: unknown): boolean {
   );
 }
 
-export async function fetchMusicBrainzMetadata(
-  metadata: {
-    artists: string[];
-    album: string | null;
-    track: string | null;
-  },
-  context: MusicBrainzLogContext = {},
+type MusicBrainzSearchInput = {
+  artists: string[];
+  album: string | null;
+  track: string | null;
+};
+
+// Feature credits and "with" notes in a title, e.g. "(feat. X)" or "[with X]".
+const FEATURE_NOTE_REGEX =
+  /\s*[([][^)\]]*\b(?:feat|ft|featuring|with)\b[^)\]]*[)\]]/gi;
+
+function cleanTitleForSearch(title: string) {
+  return title.replace(FEATURE_NOTE_REGEX, "").replace(/\s{2,}/g, " ").trim();
+}
+
+// Keeps letters and digits only, so case, accents, punctuation and "$" for "s" do not block a match.
+function normalizeForMatch(value: string) {
+  return value
+    .replace(/\$/g, "s")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+// Wraps a value in a Lucene phrase, so spaces and symbols are matched literally.
+function luceneQuote(value: string) {
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+// Searches the recording title and main artist, and the release title when asked.
+function buildRecordingQuery(
+  metadata: MusicBrainzSearchInput,
+  includeRelease: boolean,
 ) {
-  // one id per lookup, so the query, response file and track record can be linked
-  const lookup = {
-    ...context,
-    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
-  };
-
-  // build query
-  let query = "";
-
-  metadata.track && (query += `${metadata.track}`);
-  metadata.album && (query += ` AND album:${metadata.album}`);
-  if (metadata.artists.length > 0) {
-    metadata.artists.forEach((artist) => (query += ` AND artist:${artist}`));
+  const parts: string[] = [];
+  const title = cleanTitleForSearch(metadata.track ?? "");
+  if (title) parts.push(`recording:${luceneQuote(title)}`);
+  if (
+    includeRelease &&
+    metadata.album &&
+    normalizeForMatch(metadata.album) !== normalizeForMatch(title)
+  ) {
+    parts.push(`release:${luceneQuote(metadata.album)}`);
   }
+  if (metadata.artists[0]) parts.push(`artist:${luceneQuote(metadata.artists[0])}`);
+  return parts.join(" AND ");
+}
 
-  // escaping special characters for lucene and encoding to be suitable for a url
-  const luceneEscape = (str: string) =>
-    str.replace(/([+\-&|!(){}[\]^"~*?:\\\/])/g, "\\$1");
-  const escaped = luceneEscape(query);
-  const urlParam = encodeURIComponent(escaped);
+// Keeps recordings whose title matches the video track and that credit one of the
+// video's artists. Without this, the top result is used even when it is another song.
+function keepMatchingRecordings(recordings: any[], metadata: MusicBrainzSearchInput) {
+  const wantedTitle = normalizeForMatch(cleanTitleForSearch(metadata.track ?? ""));
+  const wantedArtists = new Set(metadata.artists.map(normalizeForMatch));
+  return recordings.filter((recording) => {
+    if (wantedTitle && normalizeForMatch(recording?.title ?? "") !== wantedTitle) {
+      return false;
+    }
+    if (wantedArtists.size === 0) return true;
+    return (recording?.["artist-credit"] ?? []).some(
+      (credit: { name?: string }) =>
+        wantedArtists.has(normalizeForMatch(credit?.name ?? "")),
+    );
+  });
+}
+
+// One search request. Retries transient failures, and each attempt is logged on its own.
+async function searchMusicBrainz(
+  lookup: MusicBrainzLogContext & { musicbrainzLookupId: string },
+  query: string,
+  queryStage: "with_release" | "without_release",
+) {
+  // escaping was done when the query was built, so only the URL encoding remains
+  const urlParam = encodeURIComponent(query);
 
   await logIngestInfo("musicbrainz_query_sent", {
     ...lookup,
-    query: escaped,
+    query,
     encodedQuery: urlParam,
+    queryStage,
   });
 
   // Query MusicBrainz
@@ -573,6 +619,34 @@ export async function fetchMusicBrainzMetadata(
   }
 }
 
+export async function fetchMusicBrainzMetadata(
+  metadata: MusicBrainzSearchInput,
+  context: MusicBrainzLogContext = {},
+) {
+  // one id per lookup, so the query, response file and track record can be linked
+  const lookup = {
+    ...context,
+    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+  };
+
+  // The release is a preference. If the search with it finds nothing, search without it.
+  const releaseQuery = buildRecordingQuery(metadata, true);
+  const plainQuery = buildRecordingQuery(metadata, false);
+  let result = await searchMusicBrainz(lookup, releaseQuery, "with_release");
+  if (releaseQuery !== plainQuery && (result.recordings ?? []).length === 0) {
+    result = await searchMusicBrainz(lookup, plainQuery, "without_release");
+  }
+
+  const candidates: any[] = result.recordings ?? [];
+  const recordings = keepMatchingRecordings(candidates, metadata);
+  await logIngestInfo("musicbrainz_candidates_filtered", {
+    ...lookup,
+    candidateCount: candidates.length,
+    acceptedCount: recordings.length,
+  });
+  return { ...result, recordings };
+}
+
 /* FALLBACK RECORDING if musicbrainz recording is malformed or incomplete */
 export function createFallbackRecording(parsedYtDlpMetadata: any) {
   const today = new Date().toISOString().slice(0, 10);
@@ -606,22 +680,48 @@ export function createFallbackRecording(parsedYtDlpMetadata: any) {
   };
 }
 
+const REQUIRED_RELEASE_FIELDS = [
+  [
+    "release-group.id",
+    (release: any) => release?.["release-group"]?.id != null,
+  ],
+  [
+    "release-group.primary-type",
+    (release: any) => release?.["release-group"]?.["primary-type"] != null,
+  ],
+  [
+    "release-group.title",
+    (release: any) => release?.["release-group"]?.title != null,
+  ],
+  ["date", (release: any) => release?.date != null],
+] as const;
+
 export function findFirstCompleteRelease(recording: any) {
-  const release = recording?.releases?.find(
-    (release: { [x: string]: any; date: null }) => {
-      const group = release?.["release-group"];
-      return (
-        group?.id != null &&
-        group?.["primary-type"] != null &&
-        group?.title != null &&
-        release?.date != null
-      );
-    },
+  const releases: any[] = recording?.releases ?? [];
+  const release = releases.find((candidate) =>
+    REQUIRED_RELEASE_FIELDS.every(([, has]) => has(candidate)),
   );
 
   if (!release) {
+    // Group releases by the fields they lack, so the message names the real gaps.
+    const gaps = new Map<string, number>();
+    for (const candidate of releases) {
+      const missing = REQUIRED_RELEASE_FIELDS.filter(
+        ([, has]) => !has(candidate),
+      ).map(([name]) => name);
+      const key = missing.join(", ");
+      gaps.set(key, (gaps.get(key) ?? 0) + 1);
+    }
+    const detail = [...gaps]
+      .map(
+        ([missing, count]) =>
+          `missing ${missing} (${count} ${count === 1 ? "release" : "releases"})`,
+      )
+      .join("; ");
     throw new Error(
-      "No complete release found: all releases are missing one or more required fields (release-group.id, release-group.primary-type, release-group.title, date)",
+      releases.length === 0
+        ? "No complete release found: the recording has no releases"
+        : `No complete release found in ${releases.length} ${releases.length === 1 ? "release" : "releases"}: ${detail}`,
     );
   }
 

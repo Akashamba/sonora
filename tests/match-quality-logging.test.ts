@@ -84,7 +84,7 @@ describe("MusicBrainz query and raw response", () => {
     );
 
     const query = (await records()).find((r) => r.event === "musicbrainz_query_sent");
-    expect(query).toMatchObject({ level: "info", jobId: "mb-job", youtubeId: "yt-mb", musicbrainzLookupId: "lookup-1", query: "T AND album\\:Al AND artist\\:A" });
+    expect(query).toMatchObject({ level: "info", jobId: "mb-job", youtubeId: "yt-mb", musicbrainzLookupId: "lookup-1", query: `recording:"T" AND release:"Al" AND artist:"A"` });
     expect(query.encodedQuery).toContain("T");
 
     expect(await readFile(join(tempDir, "musicbrainz", "lookup-1.json"), "utf8")).toBe(body);

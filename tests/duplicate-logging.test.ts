@@ -77,7 +77,7 @@ await db.insert(tracks).values({
   file_path: "audio/Song.m4a",
 });
 globalThis.fetch = (async () =>
-  new Response(JSON.stringify({ count: 1, recordings: [{ id: "rec-dup", score: "92", title: "Song" }] }), {
+  new Response(JSON.stringify({ count: 1, recordings: [{ id: "rec-dup", score: "92", title: "Song", "artist-credit": [{ name: "Artist" }] }] }), {
     status: 200,
     headers: { "content-type": "application/json" },
   })) as unknown as typeof fetch;
