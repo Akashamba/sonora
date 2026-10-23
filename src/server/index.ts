@@ -25,6 +25,7 @@ import {
   logIngestSuccess,
 } from "~/utils/ingestLogger";
 import { routeDbError } from "./routeDbError";
+import { audioContentType } from "~/utils/audioContentType";
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
@@ -462,7 +463,7 @@ const server = Bun.serve({
       const body = isPartial ? audioFile.slice(start, end + 1) : audioFile;
 
       const headers: Record<string, string> = {
-        "Content-Type": "audio/mp4",
+        "Content-Type": audioContentType(track.filePath),
         "Accept-Ranges": "bytes",
         "Content-Length": String(end - start + 1),
       };
