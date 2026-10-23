@@ -4,7 +4,7 @@ import { queryTrackByYoutubeId } from "~/server/db/queries/queryTrackByYoutubeId
 import { queryMatches } from "~/server/db/queries/queryTrackMatches";
 import { queryTracksByFilePath } from "~/server/db/queries/queryTracksByFilePath";
 import { addNewTrack } from "~/server/db/transactions/addNewTrack";
-import { sanitizeFileName } from "~/utils/audioPath";
+import { trackFileName } from "~/utils/audioPath";
 import { downloadWithRetry } from "~/utils/fetchAudio";
 import {
   extractRecordingAndRelease,
@@ -197,7 +197,7 @@ export async function ingestTrack(
     });
 
     // If not, download track
-    const filePath = `audio/${sanitizeFileName(recording.title)}.opus`;
+    const filePath = `audio/${trackFileName(recording.title, youtubeId)}`;
     await beginStage("audio_download");
     await logAudioPathState(filePath, context());
     const downloadAttempts = await downloadWithRetry(youtubeUrl, filePath, {
