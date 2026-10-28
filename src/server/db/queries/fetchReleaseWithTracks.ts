@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { artists, release_groups, track_artists, tracks } from "../schema";
 import { db } from "..";
 import type { ReleaseGroupResponse } from "~/types/api/ReleaseGroup";
@@ -14,6 +14,8 @@ export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
       trackId: tracks.id,
       trackTitle: tracks.title,
       trackLength: tracks.length,
+      trackNumber: tracks.track_number,
+      discNumber: tracks.disc_number,
       artistId: artists.id,
       artistName: artists.name,
       artistPosition: track_artists.pos,
@@ -24,6 +26,15 @@ export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
     .leftJoin(tracks, eq(tracks.release_group_id, release_groups.id))
     .leftJoin(track_artists, eq(track_artists.track_id, tracks.id))
     .leftJoin(artists, eq(artists.id, track_artists.artist_id))
+    // Album order: disc, then track, with unnumbered tracks last. rowid keeps the
+    // old insertion order for ties and for tracks with no numbers yet.
+    .orderBy(
+      sql`${tracks.disc_number} is null`,
+      tracks.disc_number,
+      sql`${tracks.track_number} is null`,
+      tracks.track_number,
+      sql`tracks_table.rowid`,
+    )
     .all();
 
   const releaseGroup = {
@@ -46,6 +57,8 @@ export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
         id: row.trackId,
         title: row.trackTitle,
         length: row.trackLength,
+        track_number: row.trackNumber ?? null,
+        disc_number: row.discNumber ?? null,
         artists: [],
       });
     }

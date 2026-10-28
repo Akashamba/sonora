@@ -1,6 +1,6 @@
 import { uuidv7 } from "uuidv7";
 import { randomUUID } from "crypto";
-import { int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { int, real, sqliteTable, text, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { error } from "console";
 
 export const tracks = sqliteTable("tracks_table", {
@@ -16,6 +16,10 @@ export const tracks = sqliteTable("tracks_table", {
   first_release_date: int({ mode: "timestamp_ms" }).notNull(),
   length: int().notNull(),
   file_path: text().notNull(),
+  // Medium and track position on the MusicBrainz release. Null when the release
+  // object had no track listing; album pages sort by these, with nulls last.
+  disc_number: int(),
+  track_number: int(),
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -105,6 +109,27 @@ export const play_stats = sqliteTable("play_stats_table", {
     .$defaultFn(() => new Date()),
 });
 
+export const playlists = sqliteTable("playlists", {
+  id: text().primaryKey().$defaultFn(() => uuidv7()),
+  name: text().notNull(),
+  description: text(),
+  source_url: text(),
+  created_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updated_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const imports = sqliteTable("imports", {
+  id: text().primaryKey().$defaultFn(() => uuidv7()),
+  source_url: text().notNull(),
+  mode: text().notNull(),
+  title: text(),
+  musicbrainz_release_id: text(),
+  musicbrainz_release_group_id: text(),
+  playlist_id: text().references(() => playlists.id, { onDelete: "set null" }),
+  created_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updated_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
 export const jobs = sqliteTable("jobs", {
   id: text()
     .primaryKey()
@@ -112,6 +137,9 @@ export const jobs = sqliteTable("jobs", {
   url: text().notNull(), // restricted to only urls for now, can be extended to support other types of jobs later (or other jobs can be managed through different tables)
   status: text().notNull().default("queued"), // (queued, running, completed, failed) add check condition to make this an enum
   error: text(),
+  import_id: text().references(() => imports.id, { onDelete: "set null" }),
+  position: int(),
+  track_id: text().references(() => tracks.id, { onDelete: "set null" }),
   claim_count: int().notNull().default(0), // how many times a worker has claimed this job, so retries can be told apart
   created_at: int("created_at", { mode: "timestamp_ms" })
     .notNull()
@@ -120,6 +148,19 @@ export const jobs = sqliteTable("jobs", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const playlist_tracks = sqliteTable("playlist_tracks", {
+  id: text().primaryKey().$defaultFn(() => uuidv7()),
+  playlist_id: text().notNull().references(() => playlists.id, { onDelete: "cascade" }),
+  track_id: text().notNull().references(() => tracks.id, { onDelete: "cascade" }),
+  position: real().notNull(),
+  created_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updated_at: int({ mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("playlist_tracks_playlist_position_idx").on(table.playlist_id, table.position),
+  index("playlist_tracks_playlist_idx").on(table.playlist_id),
+]);
+
 
 /* Join Tables */
 

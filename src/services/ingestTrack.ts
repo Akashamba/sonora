@@ -12,10 +12,12 @@ import { downloadWithRetry } from "~/utils/fetchAudio";
 import {
   extractRecordingAndRelease,
   fetchMusicBrainzMetadata,
+  fetchMusicBrainzRelease,
   fetchYtMetadata,
   getAudioLengthMs,
   logMusicBrainzMatchSelected,
   musicbrainzResponseFileFor,
+  matchAlbumRecording,
   parseYouTubeUrl,
 } from "~/utils/metadata-utils";
 import {
@@ -24,6 +26,92 @@ import {
   logIngestWarning,
 } from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
+import { db } from "~/server/db";
+import { imports, jobs, playlist_tracks } from "~/server/db/schema";
+import { and, eq } from "drizzle-orm";
+
+// Links the job to its track and, for a playlist import, adds the track at the job's YouTube position.
+// A re-claimed job runs this again, so an entry already at that position is left as it is.
+async function linkJobToTrack(jobId: string, trackId: string) {
+  let slot: {
+    playlistId: string;
+    position: number;
+    occupiedBy: string | null;
+  } | null = null;
+  try {
+    slot = db.transaction((tx) => {
+      tx.update(jobs)
+        .set({ track_id: trackId, updated_at: new Date() })
+        .where(eq(jobs.id, jobId))
+        .run();
+      const job = tx
+        .select({ importId: jobs.import_id, position: jobs.position })
+        .from(jobs)
+        .where(eq(jobs.id, jobId))
+        .get();
+      if (!job?.importId || job.position == null) return null;
+      const imp = tx
+        .select({ playlistId: imports.playlist_id })
+        .from(imports)
+        .where(eq(imports.id, job.importId))
+        .get();
+      if (!imp?.playlistId) return null;
+      const taken = tx
+        .select({ trackId: playlist_tracks.track_id })
+        .from(playlist_tracks)
+        .where(
+          and(
+            eq(playlist_tracks.playlist_id, imp.playlistId),
+            eq(playlist_tracks.position, job.position),
+          ),
+        )
+        .get();
+      if (taken)
+        return {
+          playlistId: imp.playlistId,
+          position: job.position,
+          occupiedBy: taken.trackId,
+        };
+      tx.insert(playlist_tracks)
+        .values({
+          playlist_id: imp.playlistId,
+          track_id: trackId,
+          position: job.position,
+          created_at: new Date(),
+          updated_at: new Date(),
+        })
+        .run();
+      return {
+        playlistId: imp.playlistId,
+        position: job.position,
+        occupiedBy: null,
+      };
+    });
+  } catch (error) {
+    await logIngestWarning("job_track_link_failed", error, { jobId, trackId });
+    return;
+  }
+  if (!slot?.occupiedBy) return;
+  // The same track on a re-claim is expected. A different track in the slot is not, and is kept out.
+  const event =
+    slot.occupiedBy === trackId
+      ? "playlist_entry_already_present"
+      : "playlist_position_taken";
+  const fields = {
+    jobId,
+    trackId,
+    playlistId: slot.playlistId,
+    position: slot.position,
+    occupiedBy: slot.occupiedBy,
+  };
+  if (event === "playlist_position_taken")
+    await logIngestWarning(
+      event,
+      new Error("playlist position already holds another track"),
+      fields,
+    );
+  else await logIngestInfo(event, fields);
+}
 
 // Which of the two keys a stored track matched on. Same comparisons as queryMatches.
 function matchedByKeys(
@@ -55,6 +143,25 @@ async function removeFileIfUnreferenced(filePath: string, context: object) {
       filePath,
     });
     return false;
+  }
+}
+
+function importContextForJob(jobId: string) {
+  try {
+    return db
+      .select({
+        importId: jobs.import_id,
+        position: jobs.position,
+        mode: imports.mode,
+        releaseId: imports.musicbrainz_release_id,
+        releaseGroupId: imports.musicbrainz_release_group_id,
+      })
+      .from(jobs)
+      .leftJoin(imports, eq(imports.id, jobs.import_id))
+      .where(eq(jobs.id, jobId))
+      .get();
+  } catch {
+    return undefined;
   }
 }
 
@@ -146,6 +253,7 @@ export async function ingestTrack(
       await logIngestInfo("ingest_waited_for_youtube_id", context());
     const existing = await queryTrackByYoutubeId(youtubeId);
     if (existing.length > 0) {
+      await linkJobToTrack(jobId, existing[0]!.id);
       await completeStage({ duplicate: true, matchCount: existing.length });
       await logIngestInfo("ingest_skipped_duplicate", {
         ...context(),
@@ -172,13 +280,60 @@ export async function ingestTrack(
       artists: ytMetadata.artists,
     });
 
-    // Get metadata from MusicBrainz
+    const importContext = importContextForJob(jobId);
+    const importMode =
+      importContext?.mode === "album" || importContext?.mode === "playlist"
+        ? importContext.mode
+        : "single";
+
+    // Get metadata from MusicBrainz. In album mode the chosen release is tried first: its track list
+    // settles the match with one request, so the recording search is only a fallback.
     await beginStage("musicbrainz_lookup");
-    const musicbrainzmetadata = await fetchMusicBrainzMetadata(ytMetadata, {
-      jobId,
-      youtubeId,
-      musicbrainzLookupId,
-    });
+    let musicbrainzmetadata: Awaited<
+      ReturnType<typeof fetchMusicBrainzMetadata>
+    > | null = null;
+    if (importMode === "album" && importContext?.releaseId) {
+      try {
+        const albumRelease = await fetchMusicBrainzRelease(
+          importContext.releaseId,
+          { jobId, youtubeId },
+        );
+        const albumRecording = matchAlbumRecording(
+          albumRelease,
+          ytMetadata.track,
+          ytMetadata.durationMs ?? null,
+          importContext.position ?? 0,
+        );
+        if (albumRecording) {
+          musicbrainzmetadata = {
+            count: 1,
+            recordings: [{ ...albumRecording, releases: [albumRelease] }],
+          };
+          await logIngestInfo("album_track_match_selected", {
+            jobId,
+            youtubeId,
+            importId: importContext.importId,
+            releaseId: albumRelease.id,
+            releaseGroupId: albumRelease["release-group"]?.id ?? null,
+            recordingId: albumRecording.id,
+            recordingTitle: albumRecording.title,
+            position: importContext.position,
+          });
+        }
+      } catch (error) {
+        await logIngestWarning("album_release_lookup_failed", error, {
+          jobId,
+          youtubeId,
+          importId: importContext.importId,
+          releaseId: importContext.releaseId,
+        });
+      }
+    }
+    musicbrainzmetadata ??= await fetchMusicBrainzMetadata(
+      ytMetadata,
+      { jobId, youtubeId, musicbrainzLookupId },
+      { preferStudio: importMode === "playlist" },
+    );
     const musicbrainzRecording = musicbrainzmetadata?.recordings?.[0];
     await completeStage({
       resultCount:
@@ -197,6 +352,7 @@ export async function ingestTrack(
     const recordingId = musicbrainzRecording?.id ?? "";
     const matches = await queryMatches(youtubeId, recordingId);
     if (matches.length > 0) {
+      await linkJobToTrack(jobId, matches[0]!.id);
       const matchedBy = matchedByKeys(matches, youtubeId, recordingId);
       await completeStage({ duplicate: true, matchCount: matches.length });
       await logIngestInfo("ingest_skipped_duplicate", {
@@ -220,6 +376,11 @@ export async function ingestTrack(
         youtubeId,
         musicbrainzLookupId,
         musicbrainzResponseFile,
+        releaseMode: importMode,
+        releaseId:
+          importMode === "album"
+            ? (importContext?.releaseId ?? undefined)
+            : undefined,
       });
     await completeStage({
       selectedTitle: recording.title,
@@ -264,13 +425,17 @@ export async function ingestTrack(
       );
     } catch (error) {
       // Another job stored this video or recording after the check above. The stored
-      // track is the answer, so this job completes as a duplicate. It saved no track,
+      // track is the answer, so this job links to it and completes. It saved no track,
       // so trackCommitted stays unset.
       const conflict = trackUniqueConflict(error);
       if (!conflict) throw error;
       const recordingKey = recording.id ?? "";
       const matches = await queryMatches(youtubeId, recordingKey);
       if (matches.length === 0) throw error;
+      // Prefer the track that owns this video, since that is the key the conflict was on.
+      const stored =
+        matches.find((match) => match.youtube_id === youtubeId) ?? matches[0]!;
+      await linkJobToTrack(jobId, stored.id);
       const fileRemoved = await removeFileIfUnreferenced(filePath, context());
       await completeStage({ duplicate: true, matchCount: matches.length });
       await logIngestInfo("ingest_skipped_duplicate", {
@@ -287,6 +452,8 @@ export async function ingestTrack(
       });
       return;
     }
+    const storedTrack = await queryTrackByYoutubeId(youtubeId);
+    if (storedTrack[0]?.id) await linkJobToTrack(jobId, storedTrack[0].id);
     progress.trackCommitted = true;
     await completeStage({ filePath });
     await logIngestInfo("ingest_completed", {

@@ -51,7 +51,7 @@ describe("route database failures", () => {
       title text NOT NULL,
       first_release_date integer NOT NULL,
       length integer NOT NULL,
-      file_path text NOT NULL,
+      file_path text NOT NULL, disc_number integer, track_number integer,
       created_at integer NOT NULL,
       updated_at integer NOT NULL
     )`);

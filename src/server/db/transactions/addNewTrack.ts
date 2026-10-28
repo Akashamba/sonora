@@ -10,6 +10,7 @@ import {
 } from "~/server/db/queries/insertTrackArtist";
 import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
 import { describeDateValue } from "~/utils/dateLogging";
+import { trackPositionOnRelease } from "~/utils/trackPosition";
 import { logIngestFailure, logIngestInfo } from "~/utils/ingestLogger";
 import { trackUniqueConflict } from "./trackUniqueConflict";
 
@@ -24,6 +25,8 @@ export interface TrackInfoType {
       cover_art_url_thumbnail_small?: string;
     };
     date: string;
+    // Present only when the release was fetched with its track listing.
+    media?: any[];
   };
   youtubeId: string;
   filePath: string;
@@ -56,11 +59,17 @@ export async function addNewTrack(
 
       // Insert track
       stage = "track_insert";
+      const position = trackPositionOnRelease(
+        trackInfo.release,
+        trackInfo.recording.id,
+      );
       const insertedTrackId = insertTrack(tx, {
         youtube_id: trackInfo.youtubeId,
         release_group_id: release_group_id,
         filePath: trackInfo.filePath,
         recording: trackInfo.recording,
+        disc_number: position?.disc_number ?? null,
+        track_number: position?.track_number ?? null,
       });
 
       // Upsert artists and capture ids to create track <-> artist relationship

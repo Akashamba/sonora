@@ -13,6 +13,8 @@ interface TrackType {
     "artist-credit": ArtistType[];
   };
   youtube_id: string;
+  disc_number?: number | null;
+  track_number?: number | null;
 }
 
 // Synchronous: see upsertReleaseGroup.
@@ -27,6 +29,8 @@ export function insertTrack(tx: Transaction, track: TrackType) {
       first_release_date: new Date(track.recording["first-release-date"]),
       length: track.recording.length,
       file_path: track.filePath,
+      disc_number: track.disc_number ?? null,
+      track_number: track.track_number ?? null,
     })
     .returning({ id: tracks.id })
     .get();

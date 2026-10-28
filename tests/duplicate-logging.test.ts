@@ -63,7 +63,7 @@ await db.run(sql\`CREATE TABLE IF NOT EXISTS tracks_table (
   title text NOT NULL,
   first_release_date integer NOT NULL,
   length integer NOT NULL,
-  file_path text NOT NULL,
+  file_path text NOT NULL, disc_number integer, track_number integer,
   created_at integer NOT NULL,
   updated_at integer NOT NULL
 )\`);
@@ -140,7 +140,7 @@ await db.run(sql\`CREATE TABLE IF NOT EXISTS tracks_table (
   title text NOT NULL,
   first_release_date integer NOT NULL,
   length integer NOT NULL,
-  file_path text NOT NULL,
+  file_path text NOT NULL, disc_number integer, track_number integer,
   created_at integer NOT NULL,
   updated_at integer NOT NULL
 )\`);

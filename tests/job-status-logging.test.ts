@@ -54,6 +54,9 @@ await db.run(sql\`CREATE TABLE IF NOT EXISTS jobs (
   url text NOT NULL,
   status text DEFAULT 'queued' NOT NULL,
   error text,
+  import_id text,
+  position integer,
+  track_id text,
   claim_count integer DEFAULT 0 NOT NULL,
   created_at integer NOT NULL,
   updated_at integer NOT NULL

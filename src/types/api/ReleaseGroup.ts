@@ -8,6 +8,12 @@ export type ReleaseGroupResponse = Simplify<
     "id" | "title" | "cover_art_url" | "first_release_date"
   > & {
     primary_type: ReleaseGroup["musicbrainz_primary_type"];
-    tracks: Simplify<Omit<TrackResponse, "release_group">>[];
+    tracks: Simplify<
+      Omit<TrackResponse, "release_group"> & {
+        // Null when the track has no MusicBrainz track listing yet.
+        track_number: number | null;
+        disc_number: number | null;
+      }
+    >[];
   }
 >;

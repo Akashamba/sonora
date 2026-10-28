@@ -49,9 +49,21 @@ describe("import logging", () => {
       url text NOT NULL,
       status text DEFAULT 'queued' NOT NULL,
       error text,
+      import_id text,
+      position integer,
+      track_id text,
       claim_count integer DEFAULT 0 NOT NULL,
       created_at integer NOT NULL,
       updated_at integer NOT NULL
+    )`);
+    setup.run(`CREATE TABLE playlists (
+      id text PRIMARY KEY NOT NULL, name text NOT NULL, description text, source_url text,
+      created_at integer NOT NULL, updated_at integer NOT NULL
+    )`);
+    setup.run(`CREATE TABLE imports (
+      id text PRIMARY KEY NOT NULL, source_url text NOT NULL, mode text NOT NULL, title text,
+      musicbrainz_release_id text, musicbrainz_release_group_id text, playlist_id text,
+      created_at integer NOT NULL, updated_at integer NOT NULL
     )`);
 
     const port = 20000 + Math.floor(Math.random() * 20000);

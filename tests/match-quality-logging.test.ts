@@ -236,7 +236,7 @@ const { db } = await import(${JSON.stringify(join(process.cwd(), "src/server/db/
 const { addNewTrack } = await import(${JSON.stringify(addNewTrackModule)});
 await db.run(sql\`CREATE TABLE release_groups_table (id text PRIMARY KEY NOT NULL, musicbrainz_release_group_id text UNIQUE, musicbrainz_primary_type text NOT NULL, title text NOT NULL, cover_art_url text, first_release_date integer NOT NULL, cover_art_url_thumbnail_large text, cover_art_url_thumbnail_small text, created_at integer NOT NULL, updated_at integer NOT NULL)\`);
 await db.run(sql\`CREATE TABLE artists_table (id text PRIMARY KEY NOT NULL, musicbrainz_id text UNIQUE, name text NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)\`);
-await db.run(sql\`CREATE TABLE tracks_table (id text PRIMARY KEY NOT NULL, youtube_id text NOT NULL UNIQUE, musicbrainz_recording_id text UNIQUE, release_group_id text, title text NOT NULL, first_release_date integer NOT NULL, length integer NOT NULL, file_path text NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)\`);
+await db.run(sql\`CREATE TABLE tracks_table (id text PRIMARY KEY NOT NULL, youtube_id text NOT NULL UNIQUE, musicbrainz_recording_id text UNIQUE, release_group_id text, title text NOT NULL, first_release_date integer NOT NULL, length integer NOT NULL, file_path text NOT NULL, disc_number integer, track_number integer, created_at integer NOT NULL, updated_at integer NOT NULL)\`);
 await db.run(sql\`CREATE TABLE track_artists (track_id text, artist_id text, pos integer NOT NULL, joinphrase text)\`);
 await addNewTrack({
   release: { date: "2020-05-01", "release-group": { id: "rg-committed", "primary-type": "Album", title: "Album" } },
