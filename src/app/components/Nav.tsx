@@ -11,8 +11,20 @@ interface PlaylistBrief {
   coverArtUrls?: string[];
 }
 
+// The section a page belongs to, so exactly one tab or sidebar link is lit. Queue and
+// Now Playing belong to none.
+const LIBRARY_PAGES = new Set([
+  "library-page",
+  "albums-page",
+  "album-detail-page",
+  "artists-page",
+  "artist-detail-page",
+  "playlists-page",
+]);
+
 export function Nav() {
   const { nav, openPlaylist } = useApp();
+  const page = nav.page;
   const [playlists, setPlaylists] = useState<PlaylistBrief[]>([]);
   const [query, setQuery] = useState("");
   const loadPlaylists = () =>
@@ -47,7 +59,7 @@ export function Nav() {
 
   const mobileTab = (tab: Tab, label: string, icon: IconName) => (
     <button
-      className={nav.tab === tab ? "mobile-tab active" : "mobile-tab"}
+      className={page === `${tab}-page` ? "mobile-tab active" : "mobile-tab"}
       onClick={() => nav.showTab(tab)}
       key={tab}
     >
@@ -82,14 +94,19 @@ export function Nav() {
           nav.showTab("songs"),
         )}
         <div className="side-label">Library</div>
-        {sideLink(nav.tab === "songs", "clock", "Recently Added", () =>
-          nav.showTab("songs"),
+        {/* Recently Added and Songs open the Home page too, so only Home lights for it. */}
+        {sideLink(false, "clock", "Recently Added", () => nav.showTab("songs"))}
+        {sideLink(
+          page === "artists-page" || page === "artist-detail-page",
+          "person",
+          "Artists",
+          () => nav.showTab("artists"),
         )}
-        {sideLink(nav.tab === "artists", "person", "Artists", () =>
-          nav.showTab("artists"),
-        )}
-        {sideLink(nav.tab === "albums", "disc", "Albums", () =>
-          nav.showTab("albums"),
+        {sideLink(
+          page === "albums-page" || page === "album-detail-page",
+          "disc",
+          "Albums",
+          () => nav.showTab("albums"),
         )}
         {sideLink(false, "note", "Songs", () => nav.showTab("songs"))}
         <div className="side-section-heading">
@@ -126,7 +143,7 @@ export function Nav() {
           + New Playlist
         </button>
         <div className="sidebar-spacer" />
-        {sideLink(nav.tab === "import", "import", "Import", () =>
+        {sideLink(page === "import-page", "import", "Import", () =>
           nav.showTab("import"),
         )}
       </aside>
@@ -134,7 +151,7 @@ export function Nav() {
         {mobileTab("songs", "Home", "home")}
         <button
           className={
-            nav.page === "library-page" ? "mobile-tab active" : "mobile-tab"
+            LIBRARY_PAGES.has(page) ? "mobile-tab active" : "mobile-tab"
           }
           onClick={() => nav.go("library-page")}
         >

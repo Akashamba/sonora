@@ -1,13 +1,7 @@
 import { BackButton } from "../components/BackButton";
 import { TrackRow } from "../components/TrackRow";
 import { useApp } from "../context";
-import {
-  list,
-  pageSubtitle,
-  pageTitle,
-  stateError,
-  stateMsg,
-} from "../lib/styles";
+import { list, stateError, stateMsg } from "../lib/styles";
 
 export function QueuePage() {
   const { queue, player } = useApp();
@@ -22,8 +16,8 @@ export function QueuePage() {
   return (
     <>
       <BackButton />
-      <div className={pageTitle}>Queue</div>
-      <div className={pageSubtitle}>{subtitle}</div>
+      <p className="eyebrow">{subtitle}</p>
+      <h1 className="page-hero-title">Queue</h1>
       <div className={list}>
         {loading ? (
           <div className={stateMsg}>Loading queue…</div>

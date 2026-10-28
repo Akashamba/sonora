@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
+import { CoverImage } from "../components/CoverImage";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/PageHeader";
 import { TrackRow } from "../components/TrackRow";
@@ -221,11 +222,11 @@ export function SongsPage() {
                     }}
                   >
                     <span className="carousel-art">
-                      {a.cover_art_url ? (
-                        <img src={a.cover_art_url} alt="" loading="lazy" />
-                      ) : (
-                        <Icon name="disc" size={36} />
-                      )}
+                      <CoverImage
+                        src={a.cover_art_url}
+                        loading="lazy"
+                        fallback={<Icon name="disc" size={36} />}
+                      />
                     </span>
                     <strong>{a.title}</strong>
                     <small>{a.artist}</small>

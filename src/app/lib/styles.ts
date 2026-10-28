@@ -1,7 +1,5 @@
 // Tailwind class strings shared across pages. They mirror the classes of the vanilla CSS they replace.
 
-export const pageTitle =
-  "font-serif italic text-[32px] text-ink mb-1.5 tracking-[-0.5px]";
 export const pageSubtitle =
   "text-muted text-[11px] uppercase tracking-[0.1em] mb-7";
 export const searchInput =

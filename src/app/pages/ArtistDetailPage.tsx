@@ -50,7 +50,7 @@ export function ArtistDetailPage() {
           <div className="mb-2 text-[10px] tracking-[0.12em] text-accent uppercase">
             Artist
           </div>
-          <div className="mb-2 font-serif text-[28px] italic tracking-[-0.3px]">
+          <div className="mb-2 text-[32px] leading-[1.05] font-bold tracking-[-1px]">
             {artist?.name ?? "—"}
           </div>
           <div className="text-xs leading-[1.8] text-muted">All tracks</div>
