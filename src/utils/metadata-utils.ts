@@ -123,6 +123,7 @@ type ParsedYTMetadata = {
   track: string | null;
   album: string | null;
   upload_date: string | null;
+  durationMs?: number | null;
   // structured: yt-dlp track and artist were used as-is.
   // title_split: artist or track was missing, so the video title was split.
   parsePath: "structured" | "title_split";
@@ -333,6 +334,9 @@ export function parseYtDlpMetadata(
     track: track ? clean(track) : null,
     album: album ? clean(album) : null,
     upload_date,
+    durationMs: Number.isFinite(parsedMetadata.duration)
+      ? Math.round(parsedMetadata.duration * 1000)
+      : null,
     parsePath,
   };
 }
@@ -364,7 +368,7 @@ export async function logMusicBrainzMatchSelected(
     totalCount: musicbrainzmetadata?.count ?? null,
     selectedRecordingId: recording?.id ?? null,
     selectedTitle: recording?.title ?? null,
-    score: recording?.score ?? null,
+    score: recording?.matchScore ?? recording?.score ?? null,
     artistCredit:
       recording?.["artist-credit"]?.map(
         (credit: { name: string }) => credit.name,
@@ -499,6 +503,7 @@ type MusicBrainzSearchInput = {
   artists: string[];
   album: string | null;
   track: string | null;
+  durationMs?: number | null;
 };
 
 // Feature credits and "with" notes in a title, e.g. "(feat. X)" or "[with X]".
@@ -506,7 +511,11 @@ const FEATURE_NOTE_REGEX =
   /\s*[([][^)\]]*\b(?:feat|ft|featuring|with)\b[^)\]]*[)\]]/gi;
 
 function cleanTitleForSearch(title: string) {
-  return title.replace(FEATURE_NOTE_REGEX, "").replace(/\s{2,}/g, " ").trim();
+  return title
+    .replace(FEATURE_NOTE_REGEX, "")
+    .replace(/\s*[-–]\s*remaster(?:ed)?(?:\s*\d{4})?\s*$/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 // Keeps letters and digits only, so case, accents, punctuation and "$" for "s" do not block a match.
@@ -539,17 +548,26 @@ function buildRecordingQuery(
   ) {
     parts.push(`release:${luceneQuote(metadata.album)}`);
   }
-  if (metadata.artists[0]) parts.push(`artist:${luceneQuote(metadata.artists[0])}`);
+  if (metadata.artists[0])
+    parts.push(`artist:${luceneQuote(metadata.artists[0])}`);
   return parts.join(" AND ");
 }
 
 // Keeps recordings whose title matches the video track and that credit one of the
 // video's artists. Without this, the top result is used even when it is another song.
-function keepMatchingRecordings(recordings: any[], metadata: MusicBrainzSearchInput) {
-  const wantedTitle = normalizeForMatch(cleanTitleForSearch(metadata.track ?? ""));
+function keepMatchingRecordings(
+  recordings: any[],
+  metadata: MusicBrainzSearchInput,
+) {
+  const wantedTitle = normalizeForMatch(
+    cleanTitleForSearch(metadata.track ?? ""),
+  );
   const wantedArtists = new Set(metadata.artists.map(normalizeForMatch));
   return recordings.filter((recording) => {
-    if (wantedTitle && normalizeForMatch(recording?.title ?? "") !== wantedTitle) {
+    if (
+      wantedTitle &&
+      normalizeForMatch(recording?.title ?? "") !== wantedTitle
+    ) {
       return false;
     }
     if (wantedArtists.size === 0) return true;
@@ -560,11 +578,467 @@ function keepMatchingRecordings(recordings: any[], metadata: MusicBrainzSearchIn
   });
 }
 
+// Disambiguation text that marks a live, bootleg or remixed recording. Such a recording
+// often shares the studio title and length, and MusicBrainz ranks it first. "Edit" and
+// "version" are left out: a radio edit or single version is the one playlist mode wants.
+const NON_STUDIO_DISAMBIGUATION =
+  /\b(live|bootleg|remix|acoustic|demo|karaoke|instrumental|session|dolby atmos|spatial audio)\b/i;
+
+export function scoreRecordingCandidates(
+  recordings: any[],
+  metadata: MusicBrainzSearchInput,
+  options: { preferStudio?: boolean } = {},
+) {
+  const wantedTitle = normalizeForMatch(
+    cleanTitleForSearch(metadata.track ?? ""),
+  );
+  const wantedTitleRaw = (metadata.track ?? "").toLowerCase();
+  const wantedArtists = new Set(metadata.artists.map(normalizeForMatch));
+  return recordings
+    .filter(
+      (recording) => keepMatchingRecordings([recording], metadata).length > 0,
+    )
+    .map((recording) => {
+      const duration = Number(recording.length);
+      const delta =
+        metadata.durationMs && duration
+          ? Math.abs(metadata.durationMs - duration)
+          : null;
+      const durationScore =
+        delta === null ? 0 : Math.max(-50, 20 - delta / 1000);
+      const artistMatch = (recording?.["artist-credit"] ?? []).some(
+        (credit: { name?: string }) =>
+          wantedArtists.has(normalizeForMatch(credit?.name ?? "")),
+      );
+      // A live or remix copy loses unless the video title asks for it. Playlist mode
+      // also wants the single version: a recording on an official Single wins.
+      let studioScore = 0;
+      const nonStudio = NON_STUDIO_DISAMBIGUATION.exec(
+        recording?.disambiguation ?? "",
+      )?.[1];
+      if (nonStudio && !wantedTitleRaw.includes(nonStudio.toLowerCase())) {
+        studioScore -= 40;
+      }
+      if (options.preferStudio) {
+        const onSingle = (recording?.releases ?? []).some(
+          (release: any) =>
+            release?.status === "Official" &&
+            release?.["release-group"]?.["primary-type"] === "Single",
+        );
+        if (onSingle) studioScore += 25;
+      }
+      const score =
+        (Number(recording.score) || 0) +
+        durationScore +
+        (artistMatch ? 15 : 0) +
+        studioScore;
+      return { ...recording, matchScore: score, durationDeltaMs: delta };
+    })
+    .sort((a, b) => b.matchScore - a.matchScore || a.id.localeCompare(b.id));
+}
+
+export function detectPlaylistKind(
+  playlistId: string | null | undefined,
+  hasMusicBrainzReleaseMatch = false,
+): "album" | "playlist" {
+  return playlistId?.startsWith("OLAK5uy_") || hasMusicBrainzReleaseMatch
+    ? "album"
+    : "playlist";
+}
+
+export function scoreAlbumCandidates(
+  releases: any[],
+  title: string,
+  artist: string,
+  entryCount: number,
+) {
+  const normalizeAlbumTitle = (value: string) =>
+    normalizeForMatch(
+      value.replace(
+        /\b(?:deluxe|expanded|remastered|anniversary|edition)\b/gi,
+        " ",
+      ),
+    );
+  const wantedTitle = normalizeAlbumTitle(title);
+  const wantedArtist = normalizeForMatch(artist.replace(/\s+-\s+Topic$/i, ""));
+  return (
+    releases
+      .map((release) => {
+        const releaseTitle = normalizeAlbumTitle(release.title ?? "");
+        const titleScore =
+          releaseTitle === wantedTitle
+            ? 0.55
+            : releaseTitle.includes(wantedTitle) ||
+                wantedTitle.includes(releaseTitle)
+              ? 0.4
+              : 0.12;
+        const credits = (release["artist-credit"] ?? []).map((credit: any) =>
+          normalizeForMatch(credit.name ?? credit.artist?.name ?? ""),
+        );
+        const artistScore = !wantedArtist
+          ? 0
+          : credits.some((name: string) => name === wantedArtist)
+            ? 0.2
+            : credits.some(
+                  (name: string) =>
+                    name.includes(wantedArtist) || wantedArtist.includes(name),
+                )
+              ? 0.12
+              : 0;
+        const trackCount = (release.media ?? []).reduce(
+          (sum: number, media: any) =>
+            sum + Number(media["track-count"] ?? media.track?.length ?? 0),
+          0,
+        );
+        const fitScore =
+          entryCount > 0 && trackCount > 0
+            ? Math.max(
+                0,
+                0.2 *
+                  (1 -
+                    Math.min(
+                      1,
+                      Math.abs(entryCount - trackCount) /
+                        Math.max(entryCount, trackCount),
+                    )),
+              )
+            : 0;
+        const score = Math.min(
+          1,
+          titleScore +
+            artistScore +
+            fitScore +
+            (release.status === "Official" ? 0.05 : 0),
+        );
+        return {
+          releaseId: release.id,
+          releaseGroupId: release["release-group"]?.id ?? null,
+          title: release.title,
+          artist:
+            release["artist-credit"]?.map((c: any) => c.name).join(", ") ??
+            artist,
+          date: release.date ?? null,
+          country: release.country ?? null,
+          trackCount,
+          disambiguation: release.disambiguation || null,
+          coverArtUrl: release.id
+            ? `https://coverartarchive.org/release/${release.id}/front-250`
+            : null,
+          official: release.status === "Official",
+          hasCover: Boolean(release["cover-art-archive"]?.front),
+          score,
+        };
+      })
+      // A release with less than half the playlist's entries cannot be the album (a single
+      // title match is not enough), so it is not offered.
+      .filter(
+        (candidate) =>
+          !entryCount ||
+          !candidate.trackCount ||
+          candidate.trackCount * 2 >= entryCount,
+      )
+      .sort(comparePressings)
+  );
+}
+
+export type AlbumCandidate = ReturnType<typeof scoreAlbumCandidates>[number];
+
+// Orders pressings so the same inputs always give the same first pick, whatever order
+// MusicBrainz returned them in. Negative when `a` is the better pressing.
+export function comparePressings(
+  a: {
+    score: number;
+    official: boolean;
+    date: string | null;
+    releaseId: string;
+  },
+  b: {
+    score: number;
+    official: boolean;
+    date: string | null;
+    releaseId: string;
+  },
+) {
+  const byId =
+    String(a.releaseId) < String(b.releaseId)
+      ? -1
+      : String(a.releaseId) > String(b.releaseId)
+        ? 1
+        : 0;
+  return (
+    b.score - a.score ||
+    Number(b.official) - Number(a.official) ||
+    Number(Boolean(b.date)) - Number(Boolean(a.date)) ||
+    String(a.date ?? "9999").localeCompare(String(b.date ?? "9999")) ||
+    byId
+  );
+}
+
+// Pressings of one edition (same release group and track count) are the same choice, so show the best
+// pressing of each edition. Only distinct editions reach the user.
+export function collapseAlbumCandidates(
+  candidates: AlbumCandidate[],
+  limit = 5,
+): AlbumCandidate[] {
+  const best = new Map<string, AlbumCandidate>();
+  for (const candidate of candidates) {
+    const key = `${candidate.releaseGroupId ?? candidate.releaseId}|${candidate.trackCount}`;
+    const current = best.get(key);
+    if (!current || comparePressings(candidate, current) < 0)
+      best.set(key, candidate);
+  }
+  return [...best.values()].sort(comparePressings).slice(0, limit);
+}
+
+// Asks the user only when the best fit is weak, or a different edition scores about as well and
+// fits the YouTube entry count at least as well. Other pressings of the best edition never count, and
+// neither does an edition with the wrong number of tracks (a 14-track deluxe for an 11-entry playlist).
+export function albumNeedsConfirmation(
+  candidates: AlbumCandidate[],
+  entryCount: number,
+): boolean {
+  const top = candidates[0];
+  if (!top || top.score < 0.65) return true;
+  const trackGap = (candidate: AlbumCandidate) =>
+    Math.abs(candidate.trackCount - entryCount);
+  const rival = candidates.find(
+    (candidate) =>
+      candidate.releaseGroupId !== top.releaseGroupId &&
+      trackGap(candidate) <= trackGap(top),
+  );
+  return Boolean(rival && top.score - rival.score < 0.08);
+}
+
+export async function fetchMusicBrainzReleases(
+  query: string,
+  context: MusicBrainzLogContext = {},
+) {
+  const lookup = {
+    ...context,
+    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+  };
+  const host = "musicbrainz.org";
+  const url = `https://${host}/ws/2/release?query=${encodeURIComponent(query)}&fmt=json&limit=25`;
+  await logIngestInfo("musicbrainz_release_query_sent", { ...lookup, query });
+  for (let attempt = 1; ; attempt++) {
+    await waitForMusicBrainzSlot();
+    try {
+      return await logExternalCall(
+        { service: "musicbrainz", host, url, attempt, ...lookup },
+        async (record) => {
+          const res = await fetchExternal("musicbrainz", host, url, record);
+          return parseJson(await res.text(), "MusicBrainz releases");
+        },
+      );
+    } catch (error) {
+      if (
+        attempt >= MUSICBRAINZ_MAX_ATTEMPTS ||
+        !isRetryableMusicBrainzError(error)
+      )
+        throw error;
+      await Bun.sleep(musicBrainzBackoffMs(attempt));
+    }
+  }
+}
+
+// Album jobs for one release share a single lookup. A failed lookup is evicted so the
+// next job retries it instead of inheriting the failure. The cache is LRU-capped so a
+// long worker run does not grow it without bound.
+const MUSICBRAINZ_RELEASE_CACHE_LIMIT = 50;
+const musicBrainzReleaseCache = new Map<string, Promise<any>>();
+
+export function musicBrainzReleaseCacheSize() {
+  return musicBrainzReleaseCache.size;
+}
+
+export function fetchMusicBrainzRelease(
+  releaseId: string,
+  context: MusicBrainzLogContext = {},
+) {
+  const cached = musicBrainzReleaseCache.get(releaseId);
+  if (cached) {
+    // Re-insert so this entry becomes the most recently used.
+    musicBrainzReleaseCache.delete(releaseId);
+    musicBrainzReleaseCache.set(releaseId, cached);
+    return cached;
+  }
+  const pending: Promise<any> = (async () => {
+    const lookup = {
+      ...context,
+      musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+    };
+    const host = "musicbrainz.org";
+    const url = `https://${host}/ws/2/release/${encodeURIComponent(releaseId)}?inc=recordings+artist-credits+release-groups+media&fmt=json`;
+    for (let attempt = 1; ; attempt++) {
+      await waitForMusicBrainzSlot();
+      try {
+        return await logExternalCall(
+          { service: "musicbrainz", host, url, attempt, ...lookup },
+          async (record) => {
+            const res = await fetchExternal("musicbrainz", host, url, record);
+            return parseJson(await res.text(), "MusicBrainz release");
+          },
+        );
+      } catch (error) {
+        if (
+          attempt >= MUSICBRAINZ_MAX_ATTEMPTS ||
+          !isRetryableMusicBrainzError(error)
+        )
+          throw error;
+        await Bun.sleep(musicBrainzBackoffMs(attempt));
+      }
+    }
+  })();
+  musicBrainzReleaseCache.set(releaseId, pending);
+  while (musicBrainzReleaseCache.size > MUSICBRAINZ_RELEASE_CACHE_LIMIT) {
+    const oldest = musicBrainzReleaseCache.keys().next().value;
+    if (oldest === undefined) break;
+    musicBrainzReleaseCache.delete(oldest);
+  }
+  pending.catch(() => {
+    if (musicBrainzReleaseCache.get(releaseId) === pending) {
+      musicBrainzReleaseCache.delete(releaseId);
+    }
+  });
+  return pending;
+}
+
+// Every release a recording appears on. The recording search lists only a few of them,
+// often a live or bootleg release first, so playlist mode needs this lookup to find the
+// single. Paced and retried like the other MusicBrainz lookups.
+export async function fetchMusicBrainzRecordingReleases(
+  recordingId: string,
+  context: MusicBrainzLogContext = {},
+) {
+  const lookup = {
+    ...context,
+    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+  };
+  const host = "musicbrainz.org";
+  const url = `https://${host}/ws/2/recording/${encodeURIComponent(recordingId)}?inc=releases+release-groups&fmt=json`;
+  for (let attempt = 1; ; attempt++) {
+    await waitForMusicBrainzSlot();
+    try {
+      return await logExternalCall(
+        { service: "musicbrainz", host, url, attempt, ...lookup },
+        async (record) => {
+          const res = await fetchExternal("musicbrainz", host, url, record);
+          return parseJson(await res.text(), "MusicBrainz recording");
+        },
+      );
+    } catch (error) {
+      if (
+        attempt >= MUSICBRAINZ_MAX_ATTEMPTS ||
+        !isRetryableMusicBrainzError(error)
+      ) {
+        throw error;
+      }
+      await Bun.sleep(musicBrainzBackoffMs(attempt));
+    }
+  }
+}
+
+// Every release in a release group, with track listings. Used by the track-number
+// backfill. Paced and retried like the other MusicBrainz lookups, but not cached:
+// a backfill walks each group once.
+export async function fetchMusicBrainzReleasesForReleaseGroup(
+  releaseGroupId: string,
+  context: MusicBrainzLogContext = {},
+): Promise<any[]> {
+  const host = "musicbrainz.org";
+  const lookup = {
+    ...context,
+    musicbrainzLookupId: context.musicbrainzLookupId ?? crypto.randomUUID(),
+  };
+  const releases: any[] = [];
+  for (let offset = 0; ; offset += 100) {
+    const url = `https://${host}/ws/2/release?release-group=${encodeURIComponent(releaseGroupId)}&inc=recordings+media&fmt=json&limit=100&offset=${offset}`;
+    let page: any;
+    for (let attempt = 1; ; attempt++) {
+      await waitForMusicBrainzSlot();
+      try {
+        page = await logExternalCall(
+          { service: "musicbrainz", host, url, attempt, ...lookup },
+          async (record) => {
+            const res = await fetchExternal("musicbrainz", host, url, record);
+            return parseJson(await res.text(), "MusicBrainz release group");
+          },
+        );
+        break;
+      } catch (error) {
+        if (
+          attempt >= MUSICBRAINZ_MAX_ATTEMPTS ||
+          !isRetryableMusicBrainzError(error)
+        )
+          throw error;
+        await Bun.sleep(musicBrainzBackoffMs(attempt));
+      }
+    }
+    const batch: any[] = page?.releases ?? [];
+    releases.push(...batch);
+    if (
+      !batch.length ||
+      releases.length >= Number(page?.["release-count"] ?? 0)
+    )
+      break;
+  }
+  return releases;
+}
+
+export function matchAlbumRecording(
+  release: any,
+  title: string | null,
+  durationMs: number | null,
+  position: number,
+) {
+  // The playlist position counts across discs, but a track's position is per disc.
+  // Each row gets its absolute 1-based index: the tracks on earlier discs plus its own
+  // position on this disc.
+  const rows: { row: any; absolute: number }[] = [];
+  let offset = 0;
+  for (const media of release.media ?? []) {
+    const tracks: any[] = media.tracks ?? media.track ?? [];
+    tracks.forEach((row, index) => {
+      const own = Number(row.position);
+      rows.push({
+        row,
+        absolute: offset + (Number.isFinite(own) && own > 0 ? own : index + 1),
+      });
+    });
+    offset += tracks.length;
+  }
+  if (!rows.length) return null;
+
+  const wanted = normalizeForMatch(cleanTitleForSearch(title ?? ""));
+  const wantedIndex = position + 1;
+  // A title can appear on more than one disc. Prefer the copy at the playlist position.
+  const titled = rows.filter(
+    ({ row }) =>
+      normalizeForMatch(
+        cleanTitleForSearch(row.title ?? row.recording?.title ?? ""),
+      ) === wanted,
+  );
+  const exact = titled.find((c) => c.absolute === wantedIndex) ?? titled[0];
+  const candidates = rows.map(({ row }) => ({
+    row,
+    delta:
+      durationMs && Number(row.length ?? row.recording?.length)
+        ? Math.abs(durationMs - Number(row.length ?? row.recording?.length))
+        : Infinity,
+  }));
+  const match =
+    exact?.row ??
+    rows.find((c) => c.absolute === wantedIndex)?.row ??
+    candidates.sort((a: any, b: any) => a.delta - b.delta)[0]?.row;
+  const recording = match?.recording ?? match;
+  return recording?.id ? recording : null;
+}
+
 // One search request. Retries transient failures, and each attempt is logged on its own.
 async function searchMusicBrainz(
   lookup: MusicBrainzLogContext & { musicbrainzLookupId: string },
   query: string,
-  queryStage: "with_release" | "without_release",
+  queryStage: "with_release" | "without_release" | "without_version_note",
 ) {
   // escaping was done when the query was built, so only the URL encoding remains
   const urlParam = encodeURIComponent(query);
@@ -629,9 +1103,16 @@ async function searchMusicBrainz(
   }
 }
 
+// "Dog Days Are Over (2010 Version)": the video title carries a version note that the
+// recording title does not have, so the search finds nothing. Drops the last bracket.
+function stripTrailingVersionNote(track: string) {
+  return track.replace(/\s*\([^()]*\)\s*$/, "").trim();
+}
+
 export async function fetchMusicBrainzMetadata(
   metadata: MusicBrainzSearchInput,
   context: MusicBrainzLogContext = {},
+  options: { preferStudio?: boolean } = {},
 ) {
   // one id per lookup, so the query, response file and track record can be linked
   const lookup = {
@@ -647,12 +1128,50 @@ export async function fetchMusicBrainzMetadata(
     result = await searchMusicBrainz(lookup, plainQuery, "without_release");
   }
 
+  let scoringInput = metadata;
+  let recordings = scoreRecordingCandidates(
+    result.recordings ?? [],
+    metadata,
+    options,
+  );
+  const bareTrack = stripTrailingVersionNote(metadata.track ?? "");
+  if (
+    recordings.length === 0 &&
+    metadata.track &&
+    bareTrack &&
+    bareTrack !== metadata.track
+  ) {
+    scoringInput = { ...metadata, track: bareTrack };
+    result = await searchMusicBrainz(
+      lookup,
+      buildRecordingQuery(scoringInput, false),
+      "without_version_note",
+    );
+    recordings = scoreRecordingCandidates(
+      result.recordings ?? [],
+      scoringInput,
+      options,
+    );
+  }
+
   const candidates: any[] = result.recordings ?? [];
-  const recordings = keepMatchingRecordings(candidates, metadata);
   await logIngestInfo("musicbrainz_candidates_filtered", {
     ...lookup,
     candidateCount: candidates.length,
     acceptedCount: recordings.length,
+  });
+  await logIngestInfo("musicbrainz_candidate_scored", {
+    ...lookup,
+    candidateCount: recordings.length,
+    chosenId: recordings[0]?.id ?? null,
+    score: recordings[0]?.matchScore ?? null,
+    durationDeltaMs: recordings[0]?.durationDeltaMs ?? null,
+    reason:
+      recordings.length === 0
+        ? "no_exact_title_and_artist_match"
+        : recordings[0]?.durationDeltaMs == null
+          ? "title_artist_match"
+          : "title_artist_and_duration_score",
   });
   return { ...result, recordings };
 }
@@ -738,6 +1257,40 @@ export function findFirstCompleteRelease(recording: any) {
   return release;
 }
 
+export function selectReleaseForMode(
+  recording: any,
+  mode: "single" | "album" | "playlist" = "single",
+  albumHint?: string | null,
+) {
+  const complete = (recording?.releases ?? []).filter((candidate: any) =>
+    REQUIRED_RELEASE_FIELDS.every(([, has]) => has(candidate)),
+  );
+  if (!complete.length) return findFirstCompleteRelease(recording);
+  const isCompilation = (r: any) =>
+    (r["release-group"]?.["secondary-types"] ?? []).some((t: string) =>
+      /compilation/i.test(t),
+    );
+  const official = (r: any) => r.status === "Official";
+  const single = (r: any) =>
+    /single/i.test(r["release-group"]?.["primary-type"] ?? "");
+  const earliest = (r: any) => String(r.date ?? "9999");
+  const hint = normalizeForMatch(albumHint ?? "");
+  return complete.sort((a: any, b: any) => {
+    const rank = (r: any) => {
+      let score = official(r) ? 100 : 0;
+      if (!isCompilation(r)) score += 30;
+      if (mode === "playlist" && single(r)) score += 60;
+      if (mode !== "playlist" && single(r)) score -= 20;
+      // YouTube's album tag names the album even for a song in a running playlist,
+      // so it would outrank the single. Playlist mode ignores it.
+      if (mode !== "playlist" && hint && normalizeForMatch(r.title ?? "") === hint)
+        score += 150;
+      return score;
+    };
+    return rank(b) - rank(a) || earliest(a).localeCompare(earliest(b));
+  })[0];
+}
+
 async function getCoverArtForRelease(
   release: any,
   context: Partial<IngestLogContext> = {},
@@ -770,16 +1323,94 @@ async function getCoverArtForRelease(
 
 export type ReleaseDateSelection = {
   releaseDateSource:
-    "musicbrainz_release" | "placeholder" | "upload_date" | "today";
+    | "musicbrainz_release"
+    | "release_group_first_release"
+    | "recording_first_release"
+    | "placeholder"
+    | "upload_date"
+    | "today";
   recordingDateSource:
     "musicbrainz_recording" | "missing" | "upload_date" | "today";
   usedPlaceholderRelease: boolean;
 };
 
+// The release the user chose in album mode, when the lookup returned it. A chosen
+// release is used even when MusicBrainz left out its date. The date is then filled
+// from the release group, the recording, or the YouTube upload date, in that order.
+function chosenAlbumRelease(
+  recording: any,
+  releaseId: string | undefined,
+  ytUploadDate: string | null | undefined,
+) {
+  if (!releaseId) return null;
+  const chosen = (recording?.releases ?? []).find(
+    (candidate: any) => candidate?.id === releaseId,
+  );
+  if (!chosen) return null;
+  const hasIdentity = REQUIRED_RELEASE_FIELDS.filter(
+    ([name]) => name !== "date",
+  ).every(([, has]) => has(chosen));
+  if (!hasIdentity) return null;
+
+  if (chosen.date != null) {
+    return { release: chosen, dateSource: "musicbrainz_release" as const };
+  }
+  const groupDate = chosen["release-group"]?.["first-release-date"];
+  if (groupDate) {
+    return {
+      release: { ...chosen, date: groupDate },
+      dateSource: "release_group_first_release" as const,
+    };
+  }
+  if (recording?.["first-release-date"]) {
+    return {
+      release: { ...chosen, date: recording["first-release-date"] },
+      dateSource: "recording_first_release" as const,
+    };
+  }
+  if (ytUploadDate) {
+    return {
+      release: { ...chosen, date: ytUploadDate },
+      dateSource: "upload_date" as const,
+    };
+  }
+  return {
+    release: { ...chosen, date: new Date().toISOString().slice(0, 10) },
+    dateSource: "today" as const,
+  };
+}
+
+// Playlist mode needs every release of the recording to find its single. If the lookup
+// fails, the search's partial list is used, as before.
+async function withEveryRelease(recording: any, context: IngestLogContext) {
+  if (!recording.id) return recording;
+  try {
+    const full = await fetchMusicBrainzRecordingReleases(recording.id, context);
+    return {
+      ...recording,
+      releases: full.releases ?? recording.releases,
+      "first-release-date":
+        recording["first-release-date"] ?? full["first-release-date"],
+    };
+  } catch (error) {
+    await logIngestWarning("musicbrainz_recording_lookup_failed", error, {
+      ...context,
+      stage: "release_selection",
+      recordingId: recording.id,
+      ...errorKindFields(error),
+    });
+    return recording;
+  }
+}
+
 export async function extractRecordingAndRelease(
   musicbrainzmetadata: any,
   ytMetadata: Omit<ParsedYTMetadata, "parsePath">,
-  context: IngestLogContext & MusicBrainzLogContext,
+  context: IngestLogContext &
+    MusicBrainzLogContext & {
+      releaseMode?: "single" | "album" | "playlist";
+      releaseId?: string;
+    },
 ) {
   let recording = musicbrainzmetadata.recordings?.[0];
   let release;
@@ -792,9 +1423,37 @@ export async function extractRecordingAndRelease(
     releaseCount = recording.releases?.length ?? 0;
 
     // select a release from all releases in recording
+    const chosen =
+      context.releaseMode === "album"
+        ? chosenAlbumRelease(
+            recording,
+            context.releaseId,
+            ytMetadata.upload_date,
+          )
+        : null;
     try {
-      release = findFirstCompleteRelease(recording);
-      releaseDateSource = "musicbrainz_release";
+      if (chosen) {
+        release = chosen.release;
+        releaseDateSource = chosen.dateSource;
+        if (chosen.dateSource !== "musicbrainz_release") {
+          await logIngestInfo("album_release_date_filled", {
+            ...context,
+            stage: "release_selection",
+            releaseId: release.id ?? null,
+            releaseDateSource: chosen.dateSource,
+          });
+        }
+      } else {
+        if (context.releaseMode === "playlist") {
+          recording = await withEveryRelease(recording, context);
+        }
+        release = selectReleaseForMode(
+          recording,
+          context.releaseMode ?? "single",
+          ytMetadata.album,
+        );
+        releaseDateSource = "musicbrainz_release";
+      }
     } catch (error) {
       await logIngestWarning("musicbrainz_release_incomplete", error, {
         ...context,
@@ -892,4 +1551,55 @@ export async function getAudioLengthMs(filePath: string): Promise<number> {
   }
 
   return Math.round(seconds * 1000);
+}
+
+// Official album playlists (OLAK5uy_) can come without a playlist-level uploader, while
+// every entry still credits the album artist. The most common entry channel (without
+// " - Topic") is that artist, so the release search can use it instead of the title alone.
+export function albumArtistFromEntries(
+  entries: { uploader?: string | null; channel?: string | null }[],
+): string | null {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const name = String(entry.uploader ?? entry.channel ?? "")
+      .replace(/\s+-\s+Topic$/i, "")
+      .trim();
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+export function albumSearchTermsFromPlaylist(
+  title: string,
+  uploader: string | null | undefined,
+): { album: string; artist: string | null } {
+  const cleanUploader = String(uploader ?? "").trim();
+  const topicMatch = cleanUploader.match(/^(.*)\s+-\s+Topic$/i);
+  const titleParts = String(title ?? "").split(/\s+-\s+/);
+  let artist: string | null = null;
+  let rawAlbum = String(title ?? "");
+  if (topicMatch) artist = (topicMatch[1] ?? "").trim() || null;
+  else if (titleParts.length >= 2 && (titleParts[0] ?? "").trim()) {
+    artist = (titleParts[0] ?? "").trim();
+    rawAlbum = titleParts.slice(1).join(" - ");
+  }
+  const album = rawAlbum
+    .replace(/\s+-\s+\d{4}\s*$/, "")
+    .replace(/[([]\s*full album\s*[)\]]/gi, " ")
+    .replace(/\bfull album\b/gi, " ")
+    .replace(
+      /[([][^)\]]*\b(?:remastered|deluxe|edition|expanded|anniversary)\b[^)\]]*[)\]]/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return { album: album || String(title ?? "").trim(), artist };
 }
