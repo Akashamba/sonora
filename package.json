@@ -4,6 +4,8 @@
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^1.0.0-beta.17-67b1795",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "uuidv7": "^1.1.0",
     "zod": "^4.3.6"
   },
@@ -19,6 +21,11 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "drizzle-kit": "^1.0.0-beta.17-67b1795"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "bun-plugin-tailwind": "^0.1.2",
+    "drizzle-kit": "^1.0.0-beta.17-67b1795",
+    "playwright": "1.48.2",
+    "tailwindcss": "^4.3.3"
   }
 }

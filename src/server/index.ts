@@ -22,7 +22,7 @@ import {
   releaseGroupIdForRelease,
   type ImportAnalysis,
 } from "~/services/importAnalysis";
-import { readFileSync } from "fs";
+import index from "../app/index.html";
 import { fetchTracksWithMetadata } from "./db/queries/fetchTrackWithMetadata";
 import { fetchReleaseWithTracks } from "./db/queries/fetchReleaseWithTracks";
 import { fetchNextTrackWithRefill } from "./db/transactions/fetchNextTrackWithRefill";
@@ -201,23 +201,10 @@ function playlistShape(playlist: typeof playlists.$inferSelect) {
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+
   routes: {
-    // return the HTML client app
-    "/": () => {
-      const index = readFileSync("src/app/index.html", "utf8");
-
-      const withEnv = index.replace(
-        "</head>",
-        `<script>
-        window.__ENV__ = {
-          SHOW_MODAL: ${Bun.env.DEMO_MODE === "true"}
-        };
-      </script></head>`,
-      );
-
-      return new Response(withEnv, {
-        headers: { "Content-Type": "text/html" },
-      });
-    },
+    // Bun bundles the React client and its Tailwind stylesheet.
+    "/": index,
+    "/config": () =>
+      Response.json({ SHOW_MODAL: Bun.env.DEMO_MODE === "true" }),
     "/public/*": async (req) => {
       const files = await readdir("./public");
 
