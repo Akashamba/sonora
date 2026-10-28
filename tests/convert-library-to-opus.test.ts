@@ -108,7 +108,7 @@ beforeEach(async () => {
     title text NOT NULL,
     first_release_date integer NOT NULL,
     length integer NOT NULL,
-    file_path text NOT NULL,
+    file_path text NOT NULL, disc_number integer, track_number integer,
     created_at integer NOT NULL,
     updated_at integer NOT NULL
   )`);
@@ -180,6 +180,20 @@ describe("convert-library-to-opus", () => {
     const rerun = await runScript(["--apply"]);
     expect(rerun.output).toContain("1 track(s) not stored as .opus");
     expect(rerun.output).toContain("converted 0, skipped 0, failed 1");
+  });
+
+  test("keeps the old file while another row still points at it", async () => {
+    // Track f points at c's old m4a too. Once c is converted, the file is still
+    // needed by f, so it must stay. Run one at a time so the row order is fixed.
+    insertTrack("f", join(audioDir, "Song_c.m4a"));
+
+    const { output } = await runScript(["--apply", "--concurrency", "1"]);
+    expect(output).toContain(
+      `kept ${join(audioDir, "Song_c.m4a")}: track f still points at it`,
+    );
+    expect(filePathOf("c")).toBe(join(audioDir, "Song_c.opus"));
+    expect(existsSync(join(audioDir, "Song_c.m4a"))).toBe(true);
+    expect(filePathOf("f")).toBe(join(audioDir, "Song_c.m4a"));
   });
 
   test("skips a row whose target path belongs to another track", async () => {

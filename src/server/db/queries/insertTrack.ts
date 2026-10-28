@@ -15,8 +15,9 @@ interface TrackType {
   youtube_id: string;
 }
 
-export async function insertTrack(tx: Transaction, track: TrackType) {
-  const [insertedTrack] = await tx
+// Synchronous: see upsertReleaseGroup.
+export function insertTrack(tx: Transaction, track: TrackType) {
+  const insertedTrack = tx
     .insert(tracks)
     .values({
       youtube_id: track.youtube_id,
@@ -27,7 +28,8 @@ export async function insertTrack(tx: Transaction, track: TrackType) {
       length: track.recording.length,
       file_path: track.filePath,
     })
-    .returning({ id: tracks.id });
+    .returning({ id: tracks.id })
+    .get();
 
   if (!insertedTrack) {
     throw new Error(

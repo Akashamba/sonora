@@ -11,6 +11,7 @@ import {
 import { upsertReleaseGroup } from "~/server/db/queries/upsertReleseGroup";
 import { describeDateValue } from "~/utils/dateLogging";
 import { logIngestFailure, logIngestInfo } from "~/utils/ingestLogger";
+import { trackUniqueConflict } from "./trackUniqueConflict";
 
 export interface TrackInfoType {
   release: {
@@ -46,13 +47,16 @@ export async function addNewTrack(
   let stage = "release_group_upsert";
   let committed: { trackId: string; releaseGroupId: string };
   try {
-    committed = await db.transaction(async (tx) => {
+    // The body must stay synchronous. bun:sqlite commits as soon as the callback
+    // returns, so an awaited write here would run outside the transaction. Any
+    // lookup or cover-art fetch belongs before this call.
+    committed = db.transaction((tx) => {
       // Upsert release group
-      const release_group_id = await upsertReleaseGroup(tx, trackInfo.release);
+      const release_group_id = upsertReleaseGroup(tx, trackInfo.release);
 
       // Insert track
       stage = "track_insert";
-      const insertedTrackId = await insertTrack(tx, {
+      const insertedTrackId = insertTrack(tx, {
         youtube_id: trackInfo.youtubeId,
         release_group_id: release_group_id,
         filePath: trackInfo.filePath,
@@ -61,16 +65,16 @@ export async function addNewTrack(
 
       // Upsert artists and capture ids to create track <-> artist relationship
       stage = "artist_upserts";
-      const insertedArtistIds = await Promise.all(
-        trackInfo.recording["artist-credit"].map(async (artist, i) => {
-          const artistId = await insertArtist(tx, artist);
+      const insertedArtistIds = trackInfo.recording["artist-credit"].map(
+        (artist, i) => {
+          const artistId = insertArtist(tx, artist);
           return { artistId, pos: i + 1, joinphrase: artist.joinphrase };
-        }),
+        },
       );
 
       // Insert track_artist join table
       stage = "track_artist_insert";
-      await insertTrackArtist(tx, insertedTrackId, insertedArtistIds);
+      insertTrackArtist(tx, insertedTrackId, insertedArtistIds);
 
       return { trackId: insertedTrackId, releaseGroupId: release_group_id };
     });
@@ -78,6 +82,9 @@ export async function addNewTrack(
     await logIngestFailure("database_transaction_failed", error, {
       ...context,
       youtubeId: trackInfo.youtubeId,
+      // Set when another job stored the same video or recording first. The caller
+      // then completes the job as a duplicate.
+      conflict: trackUniqueConflict(error),
       trackTitle: trackInfo.recording.title,
       stage,
       recordingFirstReleaseDate: describeDateValue(

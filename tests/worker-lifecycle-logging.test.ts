@@ -8,14 +8,17 @@ let tempDir: string;
 let listenersBefore: Map<string | symbol, Function[]>;
 
 const snapshotListeners = () =>
-  new Map(process.eventNames().map((name) => [name, [...process.listeners(name)]]));
+  new Map(
+    process.eventNames().map((name) => [name, [...process.listeners(name)]]),
+  );
 
 // Drops the listeners a test added so later tests see a clean process.
 function removeAddedListeners() {
   for (const name of process.eventNames()) {
     const before = listenersBefore.get(name) ?? [];
     for (const listener of process.listeners(name)) {
-      if (!before.includes(listener)) process.removeListener(name, listener as any);
+      if (!before.includes(listener))
+        process.removeListener(name, listener as any);
     }
   }
 }
@@ -32,8 +35,13 @@ function fakeExit() {
   return { exit, exited, codes };
 }
 
+const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const todayLog = () =>
-  join(process.env.LOG_DIR!, `ingest-${new Date().toLocaleDateString("en-CA")}.jsonl`);
+  join(
+    process.env.LOG_DIR!,
+    `ingest-${new Date().toLocaleDateString("en-CA")}.jsonl`,
+  );
 async function records() {
   return (await readFile(todayLog(), "utf8"))
     .trim()
@@ -71,9 +79,56 @@ describe("worker lifecycle logging", () => {
     process.emit("SIGTERM", "SIGTERM");
     await exited;
 
-    const stopping = (await records()).find((r) => r.event === "worker_stopping");
+    const stopping = (await records()).find(
+      (r) => r.event === "worker_stopping",
+    );
     expect(stopping).toMatchObject({ level: "info", signal: "SIGTERM" });
     expect(codes).toEqual([128 + 15]);
+  });
+
+  test("waits for the stop hook before exiting on the first signal", async () => {
+    const { exit, exited, codes } = fakeExit();
+    let finishStop!: () => void;
+    const stopped = new Promise<void>((resolve) => (finishStop = resolve));
+    const seen: string[] = [];
+    await logWorkerLifecycle(exit, {
+      stop: async (signal) => {
+        seen.push(signal);
+        await stopped;
+      },
+    });
+
+    process.emit("SIGINT", "SIGINT");
+    await tick();
+    expect(codes).toEqual([]);
+
+    finishStop();
+    await exited;
+    expect(seen).toEqual(["SIGINT"]);
+    expect(codes).toEqual([128 + 2]);
+  });
+
+  test("a second signal exits at once without running the stop hook again", async () => {
+    const { exit, exited, codes } = fakeExit();
+    let stopCalls = 0;
+    await logWorkerLifecycle(exit, {
+      stop: () => {
+        stopCalls += 1;
+        return new Promise<void>(() => {});
+      },
+    });
+
+    process.emit("SIGTERM", "SIGTERM");
+    await tick();
+    process.emit("SIGINT", "SIGINT");
+    await exited;
+
+    expect(stopCalls).toBe(1);
+    expect(codes).toEqual([128 + 2]);
+    const forced = (await records()).find(
+      (r) => r.event === "worker_force_stop",
+    );
+    expect(forced).toMatchObject({ signal: "SIGINT" });
   });
 
   test("logs an uncaught exception to the file, prints it, and exits 1", async () => {
@@ -87,8 +142,13 @@ describe("worker lifecycle logging", () => {
 
     expect(codes).toEqual([1]);
     expect(errorSpy).toHaveBeenCalledWith(boom);
-    const crash = (await records()).find((r) => r.event === "uncaught_exception");
-    expect(crash).toMatchObject({ level: "error", error: { name: "Error", message: "boom" } });
+    const crash = (await records()).find(
+      (r) => r.event === "uncaught_exception",
+    );
+    expect(crash).toMatchObject({
+      level: "error",
+      error: { name: "Error", message: "boom" },
+    });
   });
 
   test("logs an unhandled rejection to the file, prints it, and exits 1", async () => {
@@ -102,7 +162,55 @@ describe("worker lifecycle logging", () => {
 
     expect(codes).toEqual([1]);
     expect(errorSpy).toHaveBeenCalledWith(reason);
-    const rejection = (await records()).find((r) => r.event === "unhandled_rejection");
-    expect(rejection).toMatchObject({ level: "error", error: { message: "rejected" } });
+    const rejection = (await records()).find(
+      (r) => r.event === "unhandled_rejection",
+    );
+    expect(rejection).toMatchObject({
+      level: "error",
+      error: { message: "rejected" },
+    });
+  });
+  test("runs beforeExit before the graceful exit and before a forced exit", async () => {
+    const order: string[] = [];
+    const { exit, exited, codes } = fakeExit();
+    await logWorkerLifecycle(
+      (code) => {
+        order.push(`exit ${code}`);
+        exit(code);
+      },
+      {
+        stop: async () => {
+          order.push("stop");
+        },
+        beforeExit: () => order.push("beforeExit"),
+      },
+    );
+
+    process.emit("SIGINT", "SIGINT");
+    await exited;
+    expect(order).toEqual(["stop", "beforeExit", `exit ${128 + 2}`]);
+    expect(codes).toEqual([128 + 2]);
+  });
+
+  test("a forced exit also runs beforeExit", async () => {
+    const order: string[] = [];
+    const { exit, exited, codes } = fakeExit();
+    await logWorkerLifecycle(
+      (code) => {
+        order.push(`exit ${code}`);
+        exit(code);
+      },
+      {
+        stop: () => new Promise<void>(() => {}),
+        beforeExit: () => order.push("beforeExit"),
+      },
+    );
+
+    process.emit("SIGTERM", "SIGTERM");
+    await tick();
+    process.emit("SIGINT", "SIGINT");
+    await exited;
+    expect(order).toEqual(["beforeExit", `exit ${128 + 2}`]);
+    expect(codes).toEqual([128 + 2]);
   });
 });

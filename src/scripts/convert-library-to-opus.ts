@@ -7,7 +7,7 @@
 // Safe to re-run: only rows still pointing at a non-Opus file are selected.
 import { access, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { $ } from "bun";
+import { commandTimeoutMs, runCommand } from "~/utils/runCommand";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import { tracks } from "~/server/db/schema";
@@ -40,7 +40,22 @@ async function exists(path: string) {
 
 async function probe(path: string) {
   const json = JSON.parse(
-    await $`ffprobe -v error -show_entries stream=codec_name,codec_type -show_entries format=format_name,duration -of json ${path}`.text(),
+    await runCommand(
+      [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_name,codec_type",
+        "-show_entries",
+        "format=format_name,duration",
+        "-of",
+        "json",
+        "--",
+        path,
+      ],
+      { timeoutMs: commandTimeoutMs("ffprobe"), label: "ffprobe" },
+    ),
   );
   const audio = json.streams?.find(
     (s: { codec_type: string }) => s.codec_type === "audio",
@@ -119,7 +134,19 @@ async function convertTrack(row: Row): Promise<void> {
     throw new Error(`track ${row.id} changed during conversion, old file kept`);
   }
 
-  // Only after the DB points at the new file.
+  // Only after the DB points at the new file. Another row may still point at the old
+  // file, so it is kept for that row.
+  const stillUsedBy = db
+    .select({ id: tracks.id })
+    .from(tracks)
+    .where(eq(tracks.file_path, row.filePath))
+    .get();
+  if (stillUsedBy) {
+    console.log(
+      `kept ${row.filePath}: track ${stillUsedBy.id} still points at it`,
+    );
+    return;
+  }
   await unlink(row.filePath).catch((error) => {
     if (error.code !== "ENOENT") throw error;
   });

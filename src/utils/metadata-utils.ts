@@ -1,4 +1,4 @@
-import { $ } from "bun";
+import { commandTimeoutMs, runCommand } from "~/utils/runCommand";
 import {
   type ExternalCallRecord,
   logExternalCall,
@@ -144,7 +144,14 @@ export async function getAllUrlsFromPlaylist(
 
   const output = await logExternalCall(
     { service: "yt_dlp_playlist", requestId },
-    () => $`yt-dlp --flat-playlist --print "%(url)s" ${url}`.text(),
+    () =>
+      runCommand(
+        ["yt-dlp", "--flat-playlist", "--print", "%(url)s", "--", url],
+        {
+          timeoutMs: commandTimeoutMs("ytDlpPlaylist"),
+          label: "yt-dlp playlist",
+        },
+      ),
   );
 
   const urls = output.trim().split("\n").filter(Boolean);
@@ -245,7 +252,10 @@ export async function fetchYtMetadata(
     { service: "yt_dlp_metadata", ...context },
     async () =>
       parseJson(
-        await $`yt-dlp --dump-json ${url}`.text(),
+        await runCommand(["yt-dlp", "--dump-json", "--", url], {
+          timeoutMs: commandTimeoutMs("ytDlpMetadata"),
+          label: "yt-dlp metadata",
+        }),
         "yt-dlp --dump-json",
       ),
   );
@@ -860,8 +870,20 @@ export async function extractRecordingAndRelease(
 
 // GET AUDIO LENGTH from the downloaded file if musicbrainz and youtube don't provide it
 export async function getAudioLengthMs(filePath: string): Promise<number> {
-  const result =
-    await $`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ${filePath}`.text();
+  const result = await runCommand(
+    [
+      "ffprobe",
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      "--",
+      filePath,
+    ],
+    { timeoutMs: commandTimeoutMs("ffprobe"), label: "ffprobe" },
+  );
 
   const seconds = parseFloat(result.trim());
 

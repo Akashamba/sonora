@@ -26,6 +26,18 @@ import {
 } from "~/utils/ingestLogger";
 import { routeDbError } from "./routeDbError";
 import { audioContentType } from "~/utils/audioContentType";
+import { killAllRunningCommands } from "~/utils/runCommand";
+import { constants } from "node:os";
+
+// Commands the server started run detached from the terminal, so a Ctrl-C or a stop
+// signal would not reach them. Kill them, then exit with the status a signal death
+// reports. The default action would end the process without running exit hooks.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    killAllRunningCommands();
+    process.exit(128 + constants.signals[signal]);
+  });
+}
 
 const server = Bun.serve({
   // `routes` requires Bun v1.2.3+

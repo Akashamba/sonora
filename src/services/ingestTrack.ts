@@ -1,9 +1,12 @@
 // TODO: Group all unknown album songs under the same album, same for artists, not for unknown name
 
+import { rm } from "node:fs/promises";
 import { queryTrackByYoutubeId } from "~/server/db/queries/queryTrackByYoutubeId";
 import { queryMatches } from "~/server/db/queries/queryTrackMatches";
 import { queryTracksByFilePath } from "~/server/db/queries/queryTracksByFilePath";
 import { addNewTrack } from "~/server/db/transactions/addNewTrack";
+import { trackUniqueConflict } from "~/server/db/transactions/trackUniqueConflict";
+import { claimYoutubeId } from "~/services/youtubeIdClaims";
 import { trackFileName } from "~/utils/audioPath";
 import { downloadWithRetry } from "~/utils/fetchAudio";
 import {
@@ -21,6 +24,39 @@ import {
   logIngestWarning,
 } from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
+
+// Which of the two keys a stored track matched on. Same comparisons as queryMatches.
+function matchedByKeys(
+  matches: { youtube_id: string; musicbrainz_recording_id: string | null }[],
+  youtubeId: string,
+  recordingId: string,
+) {
+  return [
+    ...(matches.some((match) => match.youtube_id === youtubeId)
+      ? ["youtube_id"]
+      : []),
+    ...(matches.some((match) => match.musicbrainz_recording_id === recordingId)
+      ? ["recording_id"]
+      : []),
+  ];
+}
+
+// Deletes the downloaded file unless a track row still points at it. Two jobs for the
+// same video share one path, and the stored track owns that file.
+async function removeFileIfUnreferenced(filePath: string, context: object) {
+  try {
+    const owners = await queryTracksByFilePath(filePath);
+    if (owners.length > 0) return false;
+    await rm(filePath, { force: true });
+    return true;
+  } catch (error) {
+    await logIngestWarning("orphan_audio_remove_failed", error, {
+      ...context,
+      filePath,
+    });
+    return false;
+  }
+}
 
 // Logging only. Records whether the target path already exists and which tracks
 // already own it in the DB. Never throws, so it cannot change the ingest outcome.
@@ -66,6 +102,7 @@ export async function ingestTrack(
   timing: { queuedForMs?: number } = {},
 ) {
   let youtubeId: string | undefined;
+  let releaseYoutubeId: (() => void) | undefined;
   let stage = "parse_youtube_url";
   let stageStartedAt = Date.now();
   const ingestStartedAt = performance.now();
@@ -102,11 +139,17 @@ export async function ingestTrack(
 
     // Skip a YouTube id that is already stored, before any network call
     await beginStage("youtube_id_check");
+    // Waits here if another job in this process is already ingesting the same video.
+    const claim = await claimYoutubeId(youtubeId);
+    releaseYoutubeId = claim.release;
+    if (claim.waited)
+      await logIngestInfo("ingest_waited_for_youtube_id", context());
     const existing = await queryTrackByYoutubeId(youtubeId);
     if (existing.length > 0) {
       await completeStage({ duplicate: true, matchCount: existing.length });
       await logIngestInfo("ingest_skipped_duplicate", {
         ...context(),
+        detectedAt: "youtube_id_check",
         matchCount: existing.length,
         matchedBy: ["youtube_id"],
         matchedTrackIds: existing.map((track) => track.id),
@@ -154,20 +197,11 @@ export async function ingestTrack(
     const recordingId = musicbrainzRecording?.id ?? "";
     const matches = await queryMatches(youtubeId, recordingId);
     if (matches.length > 0) {
-      // Same comparisons as queryMatches, so the log shows which key(s) matched.
-      const matchedYoutubeId = matches.some(
-        (match) => match.youtube_id === youtubeId,
-      );
-      const matchedRecordingId = matches.some(
-        (match) => match.musicbrainz_recording_id === recordingId,
-      );
-      const matchedBy = [
-        ...(matchedYoutubeId ? ["youtube_id"] : []),
-        ...(matchedRecordingId ? ["recording_id"] : []),
-      ];
+      const matchedBy = matchedByKeys(matches, youtubeId, recordingId);
       await completeStage({ duplicate: true, matchCount: matches.length });
       await logIngestInfo("ingest_skipped_duplicate", {
         ...context(),
+        detectedAt: "duplicate_check",
         matchCount: matches.length,
         matchedBy,
         matchedTrackIds: matches.map((match) => match.id),
@@ -215,18 +249,44 @@ export async function ingestTrack(
 
     // Write to db
     await beginStage("database_write");
-    await addNewTrack(
-      {
-        release: release,
-        recording: {
-          ...recording,
-          length: audioLength ?? 0,
+    try {
+      await addNewTrack(
+        {
+          release: release,
+          recording: {
+            ...recording,
+            length: audioLength ?? 0,
+          },
+          youtubeId: youtubeId,
+          filePath: filePath,
         },
-        youtubeId: youtubeId,
-        filePath: filePath,
-      },
-      { jobId, musicbrainzLookupId, musicbrainzResponseFile },
-    );
+        { jobId, musicbrainzLookupId, musicbrainzResponseFile },
+      );
+    } catch (error) {
+      // Another job stored this video or recording after the check above. The stored
+      // track is the answer, so this job completes as a duplicate. It saved no track,
+      // so trackCommitted stays unset.
+      const conflict = trackUniqueConflict(error);
+      if (!conflict) throw error;
+      const recordingKey = recording.id ?? "";
+      const matches = await queryMatches(youtubeId, recordingKey);
+      if (matches.length === 0) throw error;
+      const fileRemoved = await removeFileIfUnreferenced(filePath, context());
+      await completeStage({ duplicate: true, matchCount: matches.length });
+      await logIngestInfo("ingest_skipped_duplicate", {
+        ...context(),
+        detectedAt: "insert",
+        conflict,
+        filePath,
+        fileRemoved,
+        matchCount: matches.length,
+        matchedBy: matchedByKeys(matches, youtubeId, recordingKey),
+        matchedTrackIds: matches.map((match) => match.id),
+        totalDurationMs: Math.round(performance.now() - ingestStartedAt),
+        queuedForMs: timing.queuedForMs,
+      });
+      return;
+    }
     progress.trackCommitted = true;
     await completeStage({ filePath });
     await logIngestInfo("ingest_completed", {
@@ -245,5 +305,7 @@ export async function ingestTrack(
       ...errorKindFields(err),
     });
     throw err;
+  } finally {
+    releaseYoutubeId?.();
   }
 }

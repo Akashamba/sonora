@@ -1,4 +1,4 @@
-import { $ } from "bun";
+import { commandTimeoutMs, runCommand } from "~/utils/runCommand";
 import {
   logExternalCall,
   logIngestInfo,
@@ -40,6 +40,7 @@ export function ytDlpDownloadArgs(
     "--embed-metadata",
     "-o",
     template,
+    "--",
     youtubeUrl,
   ];
 }
@@ -60,7 +61,11 @@ export async function downloadWithRetry(
           ...context,
           attempt: i + 1,
         },
-        () => $`${args}`,
+        () =>
+          runCommand(args, {
+            timeoutMs: commandTimeoutMs("ytDlpDownload"),
+            label: "yt-dlp download",
+          }),
       );
       // Written to the jsonl file so a download that recovered on retry still has a success record.
       const downloadAttempts = i + 1;

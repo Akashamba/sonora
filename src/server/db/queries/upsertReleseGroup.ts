@@ -1,7 +1,9 @@
 import type { Transaction } from "~/types/definitions/database";
 import { release_groups } from "../schema";
 
-export async function upsertReleaseGroup(
+// Synchronous on purpose: bun:sqlite transactions commit when the callback returns,
+// so every write inside one must run before it returns.
+export function upsertReleaseGroup(
   tx: Transaction,
   release: {
     "release-group": {
@@ -15,7 +17,7 @@ export async function upsertReleaseGroup(
     date: string;
   },
 ) {
-  const [insertedReleaseGroup] = await tx
+  const insertedReleaseGroup = tx
     .insert(release_groups)
     .values({
       musicbrainz_release_group_id: release["release-group"].id,
@@ -34,7 +36,8 @@ export async function upsertReleaseGroup(
         musicbrainz_release_group_id: release["release-group"].id,
       },
     })
-    .returning({ id: release_groups.id });
+    .returning({ id: release_groups.id })
+    .get();
 
   if (!insertedReleaseGroup?.id) {
     throw new Error("release_group_id resolved to undefined after upsert");

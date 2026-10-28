@@ -7,17 +7,20 @@ export interface InsertedAristType {
   joinphrase?: string;
 }
 
-export async function insertTrackArtist(
+// Synchronous: see upsertReleaseGroup.
+export function insertTrackArtist(
   tx: Transaction,
   insertedTrackId: string,
   insertedArtists: InsertedAristType[],
 ) {
-  await tx.insert(track_artists).values(
-    insertedArtists.map(({ artistId, pos, joinphrase }) => ({
-      track_id: insertedTrackId,
-      artist_id: artistId,
-      pos,
-      joinphrase,
-    })),
-  );
+  tx.insert(track_artists)
+    .values(
+      insertedArtists.map(({ artistId, pos, joinphrase }) => ({
+        track_id: insertedTrackId,
+        artist_id: artistId,
+        pos,
+        joinphrase,
+      })),
+    )
+    .run();
 }
