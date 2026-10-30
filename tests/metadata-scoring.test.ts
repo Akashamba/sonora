@@ -328,4 +328,13 @@ describe("album search terms from playlist", () => {
       albumSearchTermsFromPlaylist("Oasis - Definitely Maybe - 1994", null),
     ).toEqual({ album: "Definitely Maybe", artist: "Oasis" });
   });
+  test("drops the YouTube Music release type prefix instead of using it as artist", () => {
+    expect(albumSearchTermsFromPlaylist("Album - Rebel", null)).toEqual({
+      album: "Rebel",
+      artist: null,
+    });
+    expect(
+      albumSearchTermsFromPlaylist("EP - Octane", "Don Toliver - Topic"),
+    ).toEqual({ album: "Octane", artist: "Don Toliver" });
+  });
 });

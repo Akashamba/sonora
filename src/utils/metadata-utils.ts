@@ -1588,9 +1588,12 @@ export function albumSearchTermsFromPlaylist(
 ): { album: string; artist: string | null } {
   const cleanUploader = String(uploader ?? "").trim();
   const topicMatch = cleanUploader.match(/^(.*)\s+-\s+Topic$/i);
-  const titleParts = String(title ?? "").split(/\s+-\s+/);
+  // YouTube Music titles album playlists "Album - Rebel" or "EP - X". The prefix is
+  // the release type, not the artist.
+  const cleanTitle = String(title ?? "").replace(/^(?:album|ep|single)\s+-\s+/i, "");
+  const titleParts = cleanTitle.split(/\s+-\s+/);
   let artist: string | null = null;
-  let rawAlbum = String(title ?? "");
+  let rawAlbum = cleanTitle;
   if (topicMatch) artist = (topicMatch[1] ?? "").trim() || null;
   else if (titleParts.length >= 2 && (titleParts[0] ?? "").trim()) {
     artist = (titleParts[0] ?? "").trim();
