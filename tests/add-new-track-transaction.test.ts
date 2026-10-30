@@ -33,9 +33,9 @@ async function runProbe(body: string) {
     probe,
     `const { addNewTrack } = await import(${JSON.stringify(join(process.cwd(), "src/server/db/transactions/addNewTrack.ts"))});
 const { db } = await import(${JSON.stringify(join(process.cwd(), "src/server/db/index.ts"))});
-const trackInfo = (credit: any[]) => ({
+const trackInfo = (credit: any[], cover: Record<string, string> = {}) => ({
   release: {
-    "release-group": { id: "rg-1", "primary-type": "Album", title: "Album" },
+    "release-group": { id: "rg-1", "primary-type": "Album", title: "Album", ...cover },
     date: "2020-01-01",
     media: [{ position: 1, tracks: [{ position: 1, recording: { id: "rec-1" } }] }],
   },
@@ -113,5 +113,50 @@ describe("addNewTrack transaction", () => {
       artists: 2,
       trackArtists: 2,
     });
+  });
+});
+
+describe("release group cover on a later track", () => {
+  // A second track on the same release group, with its own video and recording.
+  const secondTrack = (cover: string) => `{
+    ...trackInfo([good], ${cover}),
+    youtubeId: "yt-2",
+    recording: { ...trackInfo([good]).recording, id: "rec-2", title: "Song 2" },
+  }`;
+  const coverOf = (n: string) =>
+    `{ cover_art_url: "o${n}", cover_art_url_thumbnail_large: "l${n}", cover_art_url_thumbnail_small: "s${n}" }`;
+
+  function storedCover() {
+    const db = new Database(databasePath, { readonly: true });
+    const row = db
+      .query(
+        "SELECT cover_art_url AS original, cover_art_url_thumbnail_large AS large, cover_art_url_thumbnail_small AS small FROM release_groups_table",
+      )
+      .get();
+    db.close();
+    return row;
+  }
+
+  test("fills the cover when the first track's lookup found none", async () => {
+    await runProbe(`
+      await addNewTrack(trackInfo([good]), { jobId: "job-1" });
+      await addNewTrack(${secondTrack(coverOf("1"))}, { jobId: "job-2" });
+      console.log("RESULT {}");
+    `);
+    expect(storedCover()).toEqual({ original: "o1", large: "l1", small: "s1" });
+  });
+
+  test("keeps a stored cover when a later track finds another or none", async () => {
+    await runProbe(`
+      await addNewTrack(trackInfo([good], ${coverOf("1")}), { jobId: "job-1" });
+      await addNewTrack(${secondTrack(coverOf("2"))}, { jobId: "job-2" });
+      console.log("RESULT {}");
+    `);
+    expect(storedCover()).toEqual({ original: "o1", large: "l1", small: "s1" });
+    await runProbe(`
+      await addNewTrack({ ...${secondTrack("{}")}, youtubeId: "yt-3", recording: { ...trackInfo([good]).recording, id: "rec-3" } }, { jobId: "job-3" });
+      console.log("RESULT {}");
+    `);
+    expect(storedCover()).toEqual({ original: "o1", large: "l1", small: "s1" });
   });
 });

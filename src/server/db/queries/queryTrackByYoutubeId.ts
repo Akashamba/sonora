@@ -5,7 +5,7 @@ import { tracks } from "../schema";
 // Tracks already stored under this YouTube id.
 export async function queryTrackByYoutubeId(youtubeId: string) {
   return await db
-    .select({ id: tracks.id })
+    .select({ id: tracks.id, releaseGroupId: tracks.release_group_id })
     .from(tracks)
     .where(eq(tracks.youtube_id, youtubeId));
 }

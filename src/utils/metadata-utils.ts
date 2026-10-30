@@ -8,6 +8,7 @@ import {
   writeLogArtifact,
 } from "~/utils/ingestLogger";
 import { errorKindFields } from "~/utils/networkErrors";
+import { retryCoverArt } from "~/utils/coverArtRetry";
 import { parseJson } from "~/utils/jsonErrors";
 import { describeDateValue } from "~/utils/dateLogging";
 
@@ -1297,27 +1298,29 @@ async function getCoverArtForRelease(
 ) {
   const host = "coverartarchive.org";
   const url = `https://${host}/release-group/${release["release-group"].id}`;
-  // No retry loop here, so every Cover Art call is attempt 1.
-  return logExternalCall(
-    {
-      service: "cover_art",
-      host,
-      url,
-      releaseGroupId: release["release-group"].id,
-      attempt: 1,
-      ...context,
-    },
-    async (record) => {
-      const res = await fetchExternal("cover_art", host, url, record);
-      const data = parseJson(await res.text(), "Cover Art Archive");
-      release["release-group"].cover_art_url = data.images[0].image;
-      release["release-group"].cover_art_url_thumbnail_large =
-        data.images[0].thumbnails.large;
-      release["release-group"].cover_art_url_thumbnail_small =
-        data.images[0].thumbnails.small;
+  // Each attempt is logged on its own.
+  return retryCoverArt((attempt) =>
+    logExternalCall(
+      {
+        service: "cover_art",
+        host,
+        url,
+        releaseGroupId: release["release-group"].id,
+        attempt,
+        ...context,
+      },
+      async (record) => {
+        const res = await fetchExternal("cover_art", host, url, record);
+        const data = parseJson(await res.text(), "Cover Art Archive");
+        release["release-group"].cover_art_url = data.images[0].image;
+        release["release-group"].cover_art_url_thumbnail_large =
+          data.images[0].thumbnails.large;
+        release["release-group"].cover_art_url_thumbnail_small =
+          data.images[0].thumbnails.small;
 
-      return release;
-    },
+        return release;
+      },
+    ),
   );
 }
 

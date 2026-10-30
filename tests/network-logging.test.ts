@@ -112,7 +112,9 @@ describe("cover art logging", () => {
     }
     const rs = await records(); const warnings = rs.filter((r) => r.event === "cover_art_lookup_failed"); const timings = rs.filter((r) => r.service === "cover_art");
     expect(warnings).toHaveLength(3); expect(warnings.map((r) => [r.releaseGroupId, r.errorKind])).toEqual([["rg-1", undefined], ["rg-1", "http_5xx"], ["rg-1", "unreachable"]]);
-    expect(timings).toHaveLength(3); expect(timings.map((r) => [r.outcome, r.status, r.errorKind])).toEqual([["error", 404, undefined], ["error", 500, "http_5xx"], ["error", undefined, "unreachable"]]);
+    // A 404 is not retried. A 500 and a refused connection each take all 6 attempts.
+    expect(timings).toHaveLength(13); expect(timings.map((r) => [r.outcome, r.status, r.errorKind])).toEqual([["error", 404, undefined], ...Array(6).fill(["error", 500, "http_5xx"]), ...Array(6).fill(["error", undefined, "unreachable"])]);
+    expect(timings.map((r) => r.attempt)).toEqual([1, 1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]);
   });
 
   test("success writes one timing record and no warning", async () => {

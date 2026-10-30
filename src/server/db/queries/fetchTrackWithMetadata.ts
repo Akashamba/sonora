@@ -18,6 +18,7 @@ import {
   tracks,
 } from "../schema";
 import { db } from "..";
+import { coverRoute } from "~/utils/coverCache";
 import type { TrackResponse } from "~/types/api/Track";
 
 // SQLite's default variable limit is 32766 in recent versions. Chunking keeps every
@@ -168,8 +169,16 @@ export function fetchTracksWithMetadata(opts?: {
       release_group: {
         id: row.releaseGroupId!,
         title: row.releaseGroupTitle!,
-        cover_art_url: row.releaseGroupCoverArt,
-        cover_art_url_thumbnail_small: row.releaseGroupThumbnail,
+        cover_art_url: coverRoute(
+          row.releaseGroupId,
+          row.releaseGroupCoverArt,
+          "large",
+        ),
+        cover_art_url_thumbnail_small: coverRoute(
+          row.releaseGroupId,
+          row.releaseGroupThumbnail,
+          "small",
+        ),
       },
       artists: [],
     });

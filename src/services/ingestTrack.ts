@@ -8,6 +8,7 @@ import { addNewTrack } from "~/server/db/transactions/addNewTrack";
 import { trackUniqueConflict } from "~/server/db/transactions/trackUniqueConflict";
 import { claimYoutubeId } from "~/services/youtubeIdClaims";
 import { trackFileName } from "~/utils/audioPath";
+import { COVER_SIZES, ensureCover } from "~/utils/coverCache";
 import { downloadWithRetry } from "~/utils/fetchAudio";
 import {
   extractRecordingAndRelease,
@@ -456,6 +457,24 @@ export async function ingestTrack(
     if (storedTrack[0]?.id) await linkJobToTrack(jobId, storedTrack[0].id);
     progress.trackCommitted = true;
     await completeStage({ filePath });
+    // Cache the cover now so the first time the album is shown doesn't wait on archive.org.
+    // A failed download is retried when the cover is first requested.
+    const releaseGroupId = storedTrack[0]?.releaseGroupId;
+    if (releaseGroupId) {
+      await Promise.all(
+        COVER_SIZES.map(async (size) => {
+          const result = await ensureCover(releaseGroupId, size);
+          if (result.cached || !result.error) return;
+          await logIngestWarning("cover_cache_failed", result.error, {
+            ...context(),
+            stage: "cover_cache",
+            releaseGroupId,
+            size,
+            ...errorKindFields(result.error),
+          });
+        }),
+      );
+    }
     await logIngestInfo("ingest_completed", {
       ...context(),
       trackTitle: recording.title,

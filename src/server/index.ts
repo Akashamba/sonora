@@ -43,6 +43,7 @@ import { routeDbError } from "./routeDbError";
 import { audioContentType } from "~/utils/audioContentType";
 import { CommandError, killAllRunningCommands } from "~/utils/runCommand";
 import { constants } from "node:os";
+import { coverFilePath, coverRoute, ensureCover } from "~/utils/coverCache";
 
 // Commands the server started run detached from the terminal, so a Ctrl-C or a stop
 // signal would not reach them. Kill them, then exit with the status a signal death
@@ -93,6 +94,7 @@ function liveEntries(executor: Executor, playlistId: string) {
       position: playlist_tracks.position,
       createdAt: playlist_tracks.created_at,
       length: tracks.length,
+      releaseGroupId: release_groups.id,
       cover: release_groups.cover_art_url_thumbnail_small,
     })
     .from(playlist_tracks)
@@ -189,7 +191,7 @@ function playlistShape(playlist: typeof playlists.$inferSelect) {
     coverArtUrls: [
       ...new Set(
         rows
-          .map((row) => row.cover)
+          .map((row) => coverRoute(row.releaseGroupId, row.cover, "small"))
           .filter((url): url is string => Boolean(url)),
       ),
     ].slice(0, 4),
@@ -216,6 +218,20 @@ const server = Bun.serve({
       }
 
       return new Response(file);
+    },
+    // Cover art from the local cache. A missing file is downloaded first. The URL
+    // never changes for a release group, so browsers may keep the image for a year.
+    "/covers/:id/:size": async (req) => {
+      const { id, size } = req.params;
+      if (size !== "small" && size !== "large") {
+        return new Response("Not found", { status: 404 });
+      }
+      if (!(await ensureCover(id, size)).cached) {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(Bun.file(coverFilePath(id, size)), {
+        headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+      });
     },
     // return the content for the home page
     "/home": async () => {
@@ -257,7 +273,24 @@ const server = Bun.serve({
     // return the content for the albums page (all release groups in db)
     "/release-groups": async () => {
       try {
-        const allReleaseGroups = db.select().from(release_groups).all();
+        const allReleaseGroups = db
+          .select()
+          .from(release_groups)
+          .all()
+          .map((rg) => ({
+            ...rg,
+            cover_art_url: coverRoute(rg.id, rg.cover_art_url, "large"),
+            cover_art_url_thumbnail_large: coverRoute(
+              rg.id,
+              rg.cover_art_url_thumbnail_large,
+              "large",
+            ),
+            cover_art_url_thumbnail_small: coverRoute(
+              rg.id,
+              rg.cover_art_url_thumbnail_small,
+              "small",
+            ),
+          }));
         return Response.json({
           count: allReleaseGroups.length,
           data: allReleaseGroups,

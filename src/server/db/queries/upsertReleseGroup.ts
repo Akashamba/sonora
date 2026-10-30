@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { Transaction } from "~/types/definitions/database";
 import { release_groups } from "../schema";
 
@@ -34,6 +35,11 @@ export function upsertReleaseGroup(
       target: release_groups.musicbrainz_release_group_id,
       set: {
         musicbrainz_release_group_id: release["release-group"].id,
+        // The track that created the row may have failed its cover lookup. A later
+        // track's lookup fills the gap, and never replaces a stored cover.
+        cover_art_url: sql`coalesce(${release_groups.cover_art_url}, excluded.cover_art_url)`,
+        cover_art_url_thumbnail_large: sql`coalesce(${release_groups.cover_art_url_thumbnail_large}, excluded.cover_art_url_thumbnail_large)`,
+        cover_art_url_thumbnail_small: sql`coalesce(${release_groups.cover_art_url_thumbnail_small}, excluded.cover_art_url_thumbnail_small)`,
       },
     })
     .returning({ id: release_groups.id })

@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { artists, release_groups, track_artists, tracks } from "../schema";
 import { db } from "..";
 import type { ReleaseGroupResponse } from "~/types/api/ReleaseGroup";
+import { coverRoute } from "~/utils/coverCache";
 
 export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
   const rows = db
@@ -41,7 +42,11 @@ export function fetchReleaseWithTracks(id: string): ReleaseGroupResponse {
     id: rows[0]?.releaseGroupsId!,
     title: rows[0]?.releaseGroupsTitle!,
     primary_type: rows[0]?.releaseGroupsPrimaryType!,
-    cover_art_url: rows[0]?.releaseGroupsCoverArtUrl!,
+    cover_art_url: coverRoute(
+      rows[0]?.releaseGroupsId,
+      rows[0]?.releaseGroupsCoverArtUrl,
+      "large",
+    )!,
     first_release_date: rows[0]?.releaseGroupFirstReleaseDate!,
     tracks: [] as any[],
   };
