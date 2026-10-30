@@ -474,7 +474,8 @@ async function waitForMusicBrainzSlot() {
 }
 
 // Only transient failures are retried: busy or rate limited responses, timeouts,
-// and other 5xx responses. Other failures fail on the first attempt.
+// dropped connections, and other 5xx responses. Other failures fail on the first
+// attempt.
 const MUSICBRAINZ_MAX_ATTEMPTS = 4;
 const DEFAULT_MUSICBRAINZ_BACKOFF_BASE_MS = 2000;
 const MUSICBRAINZ_BACKOFF_CAP_MS = 30000;
@@ -495,6 +496,7 @@ function isRetryableMusicBrainzError(error: unknown): boolean {
   const { errorKind } = errorKindFields(error);
   return (
     errorKind === "timeout" ||
+    errorKind === "connection_reset" ||
     errorKind === "http_429" ||
     errorKind === "http_5xx"
   );

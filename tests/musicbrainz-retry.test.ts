@@ -53,6 +53,32 @@ describe("MusicBrainz retries", () => {
   );
 
   test(
+    "a dropped connection is retried and the later success is returned",
+    async () => {
+      let calls = 0;
+      globalThis.fetch = (async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw Object.assign(
+            new TypeError("The socket connection was closed unexpectedly"),
+            { code: "ECONNRESET" },
+          );
+        }
+        return new Response(JSON.stringify({ count: 0, recordings: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+
+      const result = await fetchMusicBrainzMetadata(metadata);
+
+      expect(calls).toBe(2);
+      expect(result.count).toBe(0);
+    },
+    RETRY_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a client error is not retried",
     async () => {
       const calls = respondWith([404]);
